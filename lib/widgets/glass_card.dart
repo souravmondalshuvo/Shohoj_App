@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'liquid_glass.dart';
 
 class GlassCard extends StatelessWidget {
   final Widget child;
@@ -21,6 +22,32 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (isCupertinoPlatform(context)) {
+      final radius = BorderRadius.circular(borderRadius);
+      return LiquidGlass(
+        margin: margin,
+        padding: EdgeInsets.zero,
+        borderRadius: borderRadius,
+        borderColor: borderColor ?? Colors.white.withValues(alpha: 0.18),
+        tint: AppTheme.surface.withValues(alpha: 0.46),
+        blur: 30,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: radius,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: radius,
+            splashColor: Colors.white.withValues(alpha: 0.08),
+            highlightColor: Colors.white.withValues(alpha: 0.04),
+            child: Padding(
+              padding: padding ?? const EdgeInsets.all(16),
+              child: child,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Container(
       margin: margin,
       decoration: BoxDecoration(
