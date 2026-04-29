@@ -1,4 +1,6 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../data/departments.dart';
 import '../models/course.dart';
@@ -8,6 +10,8 @@ import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/gpa_chart.dart';
+import '../widgets/liquid_glass.dart';
+import 'profile_screen.dart';
 
 class CalculatorScreen extends StatefulWidget {
   const CalculatorScreen({super.key});
@@ -122,6 +126,13 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     );
   }
 
+  void _openProfile() {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const ProfileScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -132,22 +143,63 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     final user = context.watch<AuthService>().user;
     final chartPoints = _chartPoints;
     final dept = _selectedDept != null ? kDeptMap[_selectedDept] : null;
+    final isCupertino = isCupertinoPlatform(context);
+    final userInitial = user?.displayName?.trim().isNotEmpty == true
+        ? user!.displayName!.trim()[0]
+        : '?';
 
     return Scaffold(
+      backgroundColor: isCupertino ? Colors.transparent : null,
+      extendBody: isCupertino,
       appBar: AppBar(
+        backgroundColor: isCupertino ? Colors.transparent : null,
+        surfaceTintColor: Colors.transparent,
         title: const Text('CGPA Calculator'),
         actions: [
+          if (isCupertino)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: CupertinoButton(
+                minimumSize: const Size(34, 34),
+                padding: EdgeInsets.zero,
+                onPressed: () {
+                  HapticFeedback.lightImpact();
+                  _addSemester();
+                },
+                child: const Icon(
+                  CupertinoIcons.plus_circle_fill,
+                  color: AppTheme.green,
+                  size: 25,
+                ),
+              ),
+            ),
           if (user != null)
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: CircleAvatar(
-                radius: 16,
-                backgroundImage: user.photoURL != null ? NetworkImage(user.photoURL!) : null,
-                backgroundColor: AppTheme.greenDim,
-                child: user.photoURL == null
-                    ? Text(user.displayName?[0] ?? '?',
-                        style: const TextStyle(color: Colors.white, fontSize: 12))
-                    : null,
+              child: Tooltip(
+                message: 'Profile',
+                child: Semantics(
+                  button: true,
+                  label: 'Open profile',
+                  child: GestureDetector(
+                    onTap: _openProfile,
+                    child: SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Center(
+                        child: CircleAvatar(
+                          radius: 16,
+                          backgroundImage: user.photoURL != null ? NetworkImage(user.photoURL!) : null,
+                          backgroundColor: AppTheme.greenDim,
+                          child: user.photoURL == null
+                              ? Text(userInitial,
+                                  style: const TextStyle(color: Colors.white, fontSize: 12))
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
         ],
@@ -207,13 +259,15 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addSemester,
-        backgroundColor: AppTheme.green,
-        foregroundColor: Colors.black,
-        icon: const Icon(Icons.add),
-        label: const Text('Add Semester', style: TextStyle(fontWeight: FontWeight.w700)),
-      ),
+      floatingActionButton: isCupertino
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _addSemester,
+              backgroundColor: AppTheme.green,
+              foregroundColor: Colors.black,
+              icon: const Icon(Icons.add),
+              label: const Text('Add Semester', style: TextStyle(fontWeight: FontWeight.w700)),
+            ),
     );
   }
 }
@@ -289,15 +343,15 @@ class _DegreeTracker extends StatelessWidget {
     if (dept == null) {
       return GestureDetector(
         onTap: onPickDept,
-        child: Row(
+        child: const Row(
           children: [
-            const Icon(Icons.school_outlined, color: AppTheme.textMuted, size: 18),
-            const SizedBox(width: 8),
-            const Expanded(
+            Icon(Icons.school_outlined, color: AppTheme.textMuted, size: 18),
+            SizedBox(width: 8),
+            Expanded(
               child: Text('Select your department to track degree progress',
                   style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
             ),
-            const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted, size: 18),
+            Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted, size: 18),
           ],
         ),
       );
