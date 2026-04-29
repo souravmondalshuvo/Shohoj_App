@@ -285,8 +285,8 @@ class _SemesterCard extends StatelessWidget {
           // Add course
           GestureDetector(
             onTap: onAddCourse,
-            child: Row(
-              children: const [
+            child: const Row(
+              children: [
                 Icon(Icons.add_circle_outline_rounded, size: 16, color: AppTheme.green),
                 SizedBox(width: 6),
                 Text('Add course', style: TextStyle(color: AppTheme.green, fontSize: 13, fontWeight: FontWeight.w600)),
@@ -347,7 +347,8 @@ class _CourseRow extends StatelessWidget {
           SizedBox(
             width: 64,
             child: DropdownButtonFormField<double>(
-              value: kCreditOptions.contains(course.credits) ? course.credits : 3.0,
+              isExpanded: true,
+              initialValue: kCreditOptions.contains(course.credits) ? course.credits : 3.0,
               onChanged: (v) => onChanged(course.copyWith(credits: v)),
               dropdownColor: AppTheme.surface,
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
@@ -376,7 +377,8 @@ class _CourseRow extends StatelessWidget {
           SizedBox(
             width: 72,
             child: DropdownButtonFormField<String>(
-              value: kGradeOptions.contains(course.grade) ? course.grade : '',
+              isExpanded: true,
+              initialValue: kGradeOptions.contains(course.grade) ? course.grade : '',
               onChanged: (v) => onChanged(course.copyWith(grade: v ?? '')),
               dropdownColor: AppTheme.surface,
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
