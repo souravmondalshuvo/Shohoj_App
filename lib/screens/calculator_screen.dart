@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../data/departments.dart';
 import '../models/course.dart';
 import '../models/semester.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/gpa_chart.dart';
 
 class CalculatorScreen extends StatefulWidget {
   const CalculatorScreen({super.key});
@@ -19,6 +21,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   List<Semester> _semesters = [];
   bool _loading = true;
   int _semCounter = 0;
+  String? _selectedDept;
 
   @override
   void initState() {
@@ -95,6 +98,30 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     return total;
   }
 
+  List<GpaDataPoint> get _chartPoints {
+    return _semesters
+        .where((s) => !s.isRunning && s.gpa != null)
+        .map((s) => GpaDataPoint(s.label.replaceAll('Semester ', 'S'), s.gpa!))
+        .toList();
+  }
+
+  void _showDeptPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _DeptPicker(
+        current: _selectedDept,
+        onSelected: (code) {
+          setState(() => _selectedDept = code);
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -103,6 +130,8 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
 
     final cgpa = _cgpa;
     final user = context.watch<AuthService>().user;
+    final chartPoints = _chartPoints;
+    final dept = _selectedDept != null ? kDeptMap[_selectedDept] : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -113,9 +142,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
               padding: const EdgeInsets.only(right: 12),
               child: CircleAvatar(
                 radius: 16,
-                backgroundImage: user.photoURL != null
-                    ? NetworkImage(user.photoURL!)
-                    : null,
+                backgroundImage: user.photoURL != null ? NetworkImage(user.photoURL!) : null,
                 backgroundColor: AppTheme.greenDim,
                 child: user.photoURL == null
                     ? Text(user.displayName?[0] ?? '?',
@@ -127,8 +154,39 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       ),
       body: Column(
         children: [
-          // CGPA banner
+          // CGPA + credits banner
           _CgpaBanner(cgpa: cgpa, totalCredits: _totalCredits),
+          // GPA chart (≥2 semesters with grades)
+          if (chartPoints.length >= 2) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: GlassCard(
+                padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(left: 8, bottom: 4),
+                      child: Text('GPA Trend', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
+                    ),
+                    GpaLineChart(data: chartPoints),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          // Degree tracker
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: GlassCard(
+              padding: const EdgeInsets.all(14),
+              child: _DegreeTracker(
+                totalCredits: _totalCredits,
+                dept: dept,
+                onPickDept: _showDeptPicker,
+              ),
+            ),
+          ),
           // Semester list
           Expanded(
             child: ListView.builder(
@@ -159,6 +217,8 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     );
   }
 }
+
+// ── CGPA Banner ───────────────────────────────────────────────────────────────
 
 class _CgpaBanner extends StatelessWidget {
   final double? cgpa;
@@ -203,8 +263,10 @@ class _CgpaBanner extends StatelessWidget {
               const Text('Credits Earned', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
               const SizedBox(height: 4),
               Text(
-                totalCredits.toStringAsFixed(totalCredits == totalCredits.roundToDouble() ? 0 : 2),
-                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+                totalCredits.toStringAsFixed(
+                    totalCredits == totalCredits.roundToDouble() ? 0 : 2),
+                style: const TextStyle(
+                    fontSize: 28, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
               ),
             ],
           ),
@@ -213,6 +275,137 @@ class _CgpaBanner extends StatelessWidget {
     );
   }
 }
+
+// ── Degree Tracker ─────────────────────────────────────────────────────────────
+
+class _DegreeTracker extends StatelessWidget {
+  final double totalCredits;
+  final DeptInfo? dept;
+  final VoidCallback onPickDept;
+  const _DegreeTracker({required this.totalCredits, required this.dept, required this.onPickDept});
+
+  @override
+  Widget build(BuildContext context) {
+    if (dept == null) {
+      return GestureDetector(
+        onTap: onPickDept,
+        child: Row(
+          children: [
+            const Icon(Icons.school_outlined, color: AppTheme.textMuted, size: 18),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text('Select your department to track degree progress',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted, size: 18),
+          ],
+        ),
+      );
+    }
+
+    final required = dept!.totalCredits.toDouble();
+    final progress = (totalCredits / required).clamp(0.0, 1.0);
+    final remaining = (required - totalCredits).clamp(0.0, required);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.school_outlined, color: AppTheme.green, size: 16),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(dept!.label,
+                  style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12, fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+            ),
+            GestureDetector(
+              onTap: onPickDept,
+              child: const Text('Change', style: TextStyle(color: AppTheme.green, fontSize: 12)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        // Progress bar
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: progress,
+            backgroundColor: AppTheme.border2,
+            valueColor: AlwaysStoppedAnimation<Color>(
+              progress >= 1.0 ? AppTheme.green : AppTheme.green.withValues(alpha: 0.8),
+            ),
+            minHeight: 6,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Text('${totalCredits.toInt()} / ${required.toInt()} credits',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+            const Spacer(),
+            if (progress < 1.0)
+              Text('${remaining.toInt()} remaining',
+                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 12))
+            else
+              const Text('Complete!',
+                  style: TextStyle(color: AppTheme.green, fontSize: 12, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ── Dept Picker ───────────────────────────────────────────────────────────────
+
+class _DeptPicker extends StatelessWidget {
+  final String? current;
+  final void Function(String?) onSelected;
+  const _DeptPicker({required this.current, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
+          child: Text('Select Department',
+              style: TextStyle(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+        ),
+        if (current != null)
+          ListTile(
+            leading: const Icon(Icons.clear_rounded, color: AppTheme.textMuted),
+            title: const Text('Clear selection', style: TextStyle(color: AppTheme.textSecondary)),
+            onTap: () => onSelected(null),
+          ),
+        Flexible(
+          child: ListView.builder(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(0, 0, 0, 20),
+            itemCount: kDepartments.length,
+            itemBuilder: (_, i) {
+              final dept = kDepartments[i];
+              final sel = current == dept.code;
+              return ListTile(
+                selected: sel,
+                selectedColor: AppTheme.green,
+                title: Text(dept.label, style: TextStyle(color: sel ? AppTheme.green : AppTheme.textPrimary, fontSize: 14)),
+                subtitle: Text('${dept.totalCredits} credits',
+                    style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+                onTap: () => onSelected(dept.code),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Semester Card ─────────────────────────────────────────────────────────────
 
 class _SemesterCard extends StatelessWidget {
   final Semester semester;
@@ -240,7 +433,6 @@ class _SemesterCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
           Row(
             children: [
               Expanded(
@@ -248,11 +440,7 @@ class _SemesterCard extends StatelessWidget {
                   controller: TextEditingController(text: semester.label)
                     ..selection = TextSelection.collapsed(offset: semester.label.length),
                   onChanged: onLabelChanged,
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
+                  style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 15),
                   decoration: const InputDecoration(
                     isDense: true,
                     border: InputBorder.none,
@@ -272,7 +460,6 @@ class _SemesterCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          // Course rows
           ...List.generate(
             semester.courses.length,
             (i) => _CourseRow(
@@ -282,7 +469,6 @@ class _SemesterCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          // Add course
           GestureDetector(
             onTap: onAddCourse,
             child: const Row(
@@ -299,6 +485,8 @@ class _SemesterCard extends StatelessWidget {
   }
 }
 
+// ── Course Row ────────────────────────────────────────────────────────────────
+
 class _CourseRow extends StatelessWidget {
   final Course course;
   final void Function(Course) onChanged;
@@ -312,7 +500,6 @@ class _CourseRow extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          // Course name
           Expanded(
             flex: 3,
             child: TextField(
@@ -327,23 +514,13 @@ class _CourseRow extends StatelessWidget {
                 contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                 filled: true,
                 fillColor: AppTheme.glass,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.border2),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.border2),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.green),
-                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.border2)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.border2)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.green)),
               ),
             ),
           ),
           const SizedBox(width: 6),
-          // Credits
           SizedBox(
             width: 64,
             child: DropdownButtonFormField<double>(
@@ -357,23 +534,13 @@ class _CourseRow extends StatelessWidget {
                 contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                 filled: true,
                 fillColor: AppTheme.glass,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.border2),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.border2),
-                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.border2)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.border2)),
               ),
-              items: kCreditOptions.map((c) => DropdownMenuItem(
-                value: c,
-                child: Text(c.toString()),
-              )).toList(),
+              items: kCreditOptions.map((c) => DropdownMenuItem(value: c, child: Text(c.toString()))).toList(),
             ),
           ),
           const SizedBox(width: 6),
-          // Grade
           SizedBox(
             width: 72,
             child: DropdownButtonFormField<String>(
@@ -387,19 +554,10 @@ class _CourseRow extends StatelessWidget {
                 contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                 filled: true,
                 fillColor: AppTheme.glass,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.border2),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.border2),
-                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.border2)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.border2)),
               ),
-              items: kGradeOptions.map((g) => DropdownMenuItem(
-                value: g,
-                child: Text(g.isEmpty ? '–' : g),
-              )).toList(),
+              items: kGradeOptions.map((g) => DropdownMenuItem(value: g, child: Text(g.isEmpty ? '–' : g))).toList(),
             ),
           ),
           const SizedBox(width: 4),
