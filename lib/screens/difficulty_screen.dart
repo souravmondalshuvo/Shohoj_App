@@ -159,7 +159,7 @@ class _DifficultyScreenState extends State<DifficultyScreen> {
           children: [
             const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 36),
             const SizedBox(height: 8),
-            Text('Failed to load', style: const TextStyle(color: AppTheme.textSecondary)),
+            const Text('Failed to load', style: TextStyle(color: AppTheme.textSecondary)),
             TextButton(onPressed: _load, child: const Text('Retry')),
           ],
         ),
@@ -167,13 +167,13 @@ class _DifficultyScreenState extends State<DifficultyScreen> {
     }
 
     if (_all == null) {
-      return Center(
+      return const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircularProgressIndicator(color: AppTheme.green),
-            const SizedBox(height: 16),
-            const Text('Aggregating reviews…', style: TextStyle(color: AppTheme.textSecondary)),
+            CircularProgressIndicator(color: AppTheme.green),
+            SizedBox(height: 16),
+            Text('Aggregating reviews…', style: TextStyle(color: AppTheme.textSecondary)),
           ],
         ),
       );
@@ -300,7 +300,7 @@ class _DifficultyCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Icon(Icons.star_rounded, size: 13, color: AppTheme.gold),
+                    const Icon(Icons.star_rounded, size: 13, color: AppTheme.gold),
                     const SizedBox(width: 2),
                     Text(
                       entry.avgRating.toStringAsFixed(1),
