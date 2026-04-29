@@ -54,13 +54,13 @@ class AuthScreen extends StatelessWidget {
               ),
               const Spacer(flex: 2),
               // Features
-              _FeatureRow(icon: Icons.calculate_outlined, text: 'CGPA Calculator with retake support'),
+              const _FeatureRow(icon: Icons.calculate_outlined, text: 'CGPA Calculator with retake support'),
               const SizedBox(height: 12),
-              _FeatureRow(icon: Icons.star_outline, text: 'Course & faculty reviews'),
+              const _FeatureRow(icon: Icons.star_outline, text: 'Course & faculty reviews'),
               const SizedBox(height: 12),
-              _FeatureRow(icon: Icons.science_outlined, text: 'Grade playground & simulator'),
+              const _FeatureRow(icon: Icons.science_outlined, text: 'Grade playground & simulator'),
               const SizedBox(height: 12),
-              _FeatureRow(icon: Icons.calendar_month_outlined, text: 'Semester planner with prereqs'),
+              const _FeatureRow(icon: Icons.calendar_month_outlined, text: 'Semester planner with prereqs'),
               const Spacer(flex: 2),
               // Sign in button
               SizedBox(
