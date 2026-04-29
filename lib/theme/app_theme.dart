@@ -20,7 +20,7 @@ class AppTheme {
     brightness: Brightness.dark,
     scaffoldBackgroundColor: bg,
     primaryColor: green,
-    colorScheme: ColorScheme.dark(
+    colorScheme: const ColorScheme.dark(
       primary: green,
       secondary: greenDim,
       surface: surface,
