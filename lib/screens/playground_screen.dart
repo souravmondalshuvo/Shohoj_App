@@ -125,8 +125,8 @@ class _GradeSimulatorState extends State<_GradeSimulator> {
         const SizedBox(height: 8),
         GestureDetector(
           onTap: () => setState(() => _courses.add(_SimCourse())),
-          child: Row(
-            children: const [
+          child: const Row(
+            children: [
               Icon(Icons.add_circle_outline_rounded, size: 16, color: AppTheme.green),
               SizedBox(width: 6),
               Text('Add course', style: TextStyle(color: AppTheme.green, fontSize: 13, fontWeight: FontWeight.w600)),
@@ -165,9 +165,9 @@ class _GradeSimulatorState extends State<_GradeSimulator> {
 }
 
 class _SimCourse {
-  double credits;
-  String grade;
-  _SimCourse({this.credits = 3.0, this.grade = 'A'});
+  double credits = 3.0;
+  String grade = 'A';
+  _SimCourse();
 }
 
 class _SimCourseRow extends StatelessWidget {
@@ -187,7 +187,8 @@ class _SimCourseRow extends StatelessWidget {
           SizedBox(
             width: 70,
             child: DropdownButtonFormField<double>(
-              value: kCreditOptions.contains(course.credits) ? course.credits : 3.0,
+              isExpanded: true,
+              initialValue: kCreditOptions.contains(course.credits) ? course.credits : 3.0,
               onChanged: (v) => course.credits = v ?? 3.0,
               dropdownColor: AppTheme.surface,
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
@@ -205,7 +206,8 @@ class _SimCourseRow extends StatelessWidget {
           SizedBox(
             width: 70,
             child: DropdownButtonFormField<String>(
-              value: course.grade,
+              isExpanded: true,
+              initialValue: course.grade,
               onChanged: (v) => course.grade = v ?? 'A',
               dropdownColor: AppTheme.surface,
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
@@ -290,7 +292,7 @@ class _ReverseSolverState extends State<_ReverseSolver> {
         const SizedBox(height: 16),
         if (required != null)
           GlassCard(
-            borderColor: feasible ? AppTheme.border : Colors.redAccent.withOpacity(0.4),
+            borderColor: feasible ? AppTheme.border : Colors.redAccent.withValues(alpha: 0.4),
             child: Column(
               children: [
                 Text(
