@@ -67,7 +67,7 @@ class _GpaChartPainter extends CustomPainter {
       ..color = AppTheme.border2
       ..strokeWidth = 1;
 
-    final labelStyle = const TextStyle(
+    const labelStyle = TextStyle(
       color: AppTheme.textMuted,
       fontSize: 9,
       fontWeight: FontWeight.w500,
@@ -113,12 +113,12 @@ class _GpaChartPainter extends CustomPainter {
     final dotPaint = Paint()..color = green..style = PaintingStyle.fill;
     final dotBgPaint = Paint()..color = AppTheme.bg..style = PaintingStyle.fill;
 
-    final valStyle = const TextStyle(
+    const valStyle = TextStyle(
       color: AppTheme.green,
       fontSize: 9,
       fontWeight: FontWeight.w700,
     );
-    final semStyle = const TextStyle(
+    const semStyle = TextStyle(
       color: AppTheme.textMuted,
       fontSize: 9,
     );
