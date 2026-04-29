@@ -3,6 +3,7 @@ import 'calculator_screen.dart';
 import 'reviews_screen.dart';
 import 'playground_screen.dart';
 import 'planner_screen.dart';
+import 'difficulty_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,6 +20,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ReviewsScreen(),
     PlaygroundScreen(),
     PlannerScreen(),
+    DifficultyScreen(),
   ];
 
   @override
@@ -48,6 +50,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icon(Icons.calendar_month_outlined),
             selectedIcon: Icon(Icons.calendar_month),
             label: 'Planner',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map),
+            label: 'Difficulty',
           ),
         ],
       ),
