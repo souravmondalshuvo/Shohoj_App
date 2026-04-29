@@ -1,5 +1,8 @@
 # Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+platform :ios, '13.0'
+
+# Pin Firebase iOS SDK to version with working BoringSSL-GRPC
+$FirebaseSDKVersion = '11.4.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -37,7 +40,40 @@ target 'Runner' do
 end
 
 post_install do |installer|
+  # Create missing PrivacyInfo.xcprivacy for BoringSSL-GRPC
+  boringssl_privacy = File.expand_path('Pods/BoringSSL-GRPC/src/PrivacyInfo.xcprivacy', __dir__)
+  unless File.exist?(boringssl_privacy)
+    FileUtils.mkdir_p(File.dirname(boringssl_privacy))
+    File.write(boringssl_privacy, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+          <key>NSPrivacyTracking</key>
+          <false/>
+          <key>NSPrivacyCollectedDataTypes</key>
+          <array/>
+          <key>NSPrivacyAccessedAPITypes</key>
+          <array/>
+          <key>NSPrivacyTrackingDomains</key>
+          <array/>
+      </dict>
+      </plist>
+    PLIST
+  end
+
+
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+      if target.name == 'AppCheckCore'
+        config.build_settings['HEADER_SEARCH_PATHS'] = '"$(PODS_ROOT)/AppCheckCore" $(inherited)'
+      end
+      if target.name == 'AppAuth' || target.name == 'GTMAppAuth'
+        config.build_settings['HEADER_SEARCH_PATHS'] = '"$(PODS_ROOT)/AppAuth/Source/Public" $(inherited)'
+      end
+    end
   end
 end
