@@ -52,19 +52,19 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
           if (_search.length >= 2)
             Expanded(child: _ReviewList(courseQuery: _search))
           else
-            Expanded(
+            const Expanded(
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.search_rounded, size: 48, color: AppTheme.textMuted),
-                    const SizedBox(height: 12),
-                    const Text(
+                    Icon(Icons.search_rounded, size: 48, color: AppTheme.textMuted),
+                    SizedBox(height: 12),
+                    Text(
                       'Search for a course to see reviews',
                       style: TextStyle(color: AppTheme.textSecondary),
                     ),
-                    const SizedBox(height: 4),
-                    const Text(
+                    SizedBox(height: 4),
+                    Text(
                       'e.g. CSE110, MAT110, ENG101',
                       style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
                     ),
@@ -209,9 +209,9 @@ class _DifficultyChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: _color.withOpacity(0.12),
+        color: _color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _color.withOpacity(0.4)),
+        border: Border.all(color: _color.withValues(alpha: 0.4)),
       ),
       child: Text(_label, style: TextStyle(color: _color, fontSize: 11, fontWeight: FontWeight.w600)),
     );
