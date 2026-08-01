@@ -60,6 +60,21 @@ dart pub global activate flutterfire_cli
 flutterfire configure
 ```
 
+### Firestore rules and indexes
+
+This app shares the `shohoj` Firebase project with the Shohoj web app. Firestore
+rules and indexes are owned by the **web repo** and must only ever be deployed
+from there.
+
+A rules deploy replaces the entire ruleset rather than merging, so deploying
+from this repo would silently wipe the web app's security model. `firebase.json`
+here deliberately declares no `firestore` block, and `firestore.rules` /
+`firestore.indexes.json` are gitignored so a stray local copy cannot be picked
+up.
+
+When the app needs access to a new collection, change the rules in the web repo
+and deploy from there.
+
 ## Auth Rules
 
 Shohoj only allows Google accounts ending with:
