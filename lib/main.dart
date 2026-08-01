@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
@@ -37,7 +38,21 @@ class _AuthGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthService>();
-    return auth.isSignedIn ? const HomeScreen() : const AuthScreen();
+    final auth = context.read<AuthService>();
+
+    return StreamBuilder<User?>(
+      stream: auth.authStateChanges,
+      initialData: auth.user,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            snapshot.data == null) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        return snapshot.data != null ? const HomeScreen() : const AuthScreen();
+      },
+    );
   }
 }
