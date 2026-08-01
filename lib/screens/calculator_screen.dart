@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../data/departments.dart';
+import '../models/app_state.dart';
 import '../models/course.dart';
 import '../models/semester.dart';
 import '../services/auth_service.dart';
@@ -22,10 +23,16 @@ class CalculatorScreen extends StatefulWidget {
 
 class _CalculatorScreenState extends State<CalculatorScreen> {
   final _fs = FirestoreService();
-  List<Semester> _semesters = [];
+
+  /// The whole shared state document, not just the semester list. Held intact
+  /// so fields this screen does not edit — planner selections, intake term,
+  /// department — survive a save instead of being dropped.
+  AppState _state = AppState();
+
   bool _loading = true;
-  int _semCounter = 0;
   String? _selectedDept;
+
+  List<Semester> get _semesters => _state.semesters;
 
   @override
   void initState() {
@@ -34,23 +41,31 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   }
 
   Future<void> _load() async {
-    final loaded = await _fs.loadSemesters();
+    final loaded = await _fs.loadState();
     setState(() {
-      _semesters = loaded.isEmpty ? [_newSem()] : loaded;
-      _semCounter = _semesters.length;
+      _state = loaded ?? AppState();
+      if (_state.semesters.isEmpty) {
+        _state.semesters.add(_newSem());
+        _state.semesterCounter = _state.semesters.length;
+      }
       _loading = false;
     });
   }
 
+  /// Allocates the next semester id.
+  ///
+  /// Ids are ints because the web discards any block whose id is not a number.
+  /// `semesterCounter` is the shared allocator, so ids stay unique across both
+  /// clients rather than colliding on list length.
   Semester _newSem() => Semester(
-        id: 'sem_${DateTime.now().millisecondsSinceEpoch}_$_semCounter',
-        label: 'Semester ${_semCounter + 1}',
+        id: _state.semesterCounter,
+        name: 'Semester ${_state.semesterCounter + 1}',
       );
 
   void _addSemester() {
     setState(() {
-      _semCounter++;
-      _semesters.add(_newSem());
+      _state.semesters.add(_newSem());
+      _state.semesterCounter++;
     });
     _save();
   }
@@ -76,13 +91,13 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   }
 
   Future<void> _save() async {
-    await _fs.saveSemesters(_semesters);
+    await _fs.saveState(_state);
   }
 
   double? get _cgpa {
     double pts = 0, creds = 0;
     for (final sem in _semesters) {
-      if (sem.isRunning) continue;
+      if (sem.running) continue;
       for (final c in sem.courses) {
         if (!c.countsTowardGPA) continue;
         final gp = c.gradePoint;
@@ -104,8 +119,8 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
 
   List<GpaDataPoint> get _chartPoints {
     return _semesters
-        .where((s) => !s.isRunning && s.gpa != null)
-        .map((s) => GpaDataPoint(s.label.replaceAll('Semester ', 'S'), s.gpa!))
+        .where((s) => !s.running && s.gpa != null)
+        .map((s) => GpaDataPoint(s.name.replaceAll('Semester ', 'S'), s.gpa!))
         .toList();
   }
 
@@ -251,7 +266,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
                 onUpdateCourse: (ci, c) => _updateCourse(i, ci, c),
                 onRemoveSemester: _semesters.length > 1 ? () => _removeSemester(i) : null,
                 onLabelChanged: (label) {
-                  setState(() => _semesters[i].label = label);
+                  setState(() => _semesters[i].name = label);
                   _save();
                 },
               ),
@@ -491,8 +506,8 @@ class _SemesterCard extends StatelessWidget {
             children: [
               Expanded(
                 child: TextField(
-                  controller: TextEditingController(text: semester.label)
-                    ..selection = TextSelection.collapsed(offset: semester.label.length),
+                  controller: TextEditingController(text: semester.name)
+                    ..selection = TextSelection.collapsed(offset: semester.name.length),
                   onChanged: onLabelChanged,
                   style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.w600, fontSize: 15),
                   decoration: const InputDecoration(
