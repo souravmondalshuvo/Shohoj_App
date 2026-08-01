@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../models/app_state.dart';
 import '../models/semester.dart';
 
 class DifficultyEntry {
@@ -25,24 +26,71 @@ class FirestoreService {
   DocumentReference? get _userDoc =>
       _uid != null ? _db.collection('users').doc(_uid) : null;
 
-  // ── Semesters (CGPA data) ──────────────────────────────────────────────────
+  // ── User state (shared with the web app) ───────────────────────────────────
+  //
+  // `users/{uid}` is owned jointly with the Shohoj web app and has exactly two
+  // fields: `data` (the whole state as a JSON string) and `updatedAt`. The web's
+  // security rules enforce `keys().hasOnly(['data', 'updatedAt'])` on the
+  // *resulting* document, so a merge write that leaves any other field in place
+  // is rejected — see the legacy cleanup in [saveState].
 
-  Future<List<Semester>> loadSemesters() async {
+  /// Reads the shared state document.
+  ///
+  /// Returns `null` when the user has no cloud state yet. Malformed JSON also
+  /// reads as `null` rather than throwing, matching the web's `parseStoredState`.
+  Future<AppState?> loadState() async {
     final doc = await _userDoc?.get();
-    if (doc == null || !doc.exists) return [];
-    final data = doc.data() as Map<String, dynamic>?;
-    final raw = data?['semesters'] as List?;
-    return raw
-            ?.map((s) => Semester.fromMap(s as Map<String, dynamic>))
-            .toList() ??
-        [];
+    if (doc == null || !doc.exists) return null;
+    final fields = doc.data() as Map<String, dynamic>?;
+    if (fields == null) return null;
+
+    final raw = fields['data'];
+    if (raw is String) return AppState.decode(raw);
+
+    // Pre-contract app builds stored a top-level `semesters` array instead.
+    return _migrateLegacyState(fields);
   }
 
-  Future<void> saveSemesters(List<Semester> semesters) async {
+  /// Writes the shared state document.
+  ///
+  /// Also clears the legacy top-level `semesters` field. Without this the merged
+  /// document would carry a third key and fail the web's `hasOnly` rule, so every
+  /// write from a previously-migrated account would be rejected.
+  Future<void> saveState(AppState state) async {
     await _userDoc?.set({
-      'semesters': semesters.map((s) => s.toMap()).toList(),
+      'data': state.encode(),
       'updatedAt': FieldValue.serverTimestamp(),
+      'semesters': FieldValue.delete(),
     }, SetOptions(merge: true));
+  }
+
+  /// Converts a pre-contract document into the shared shape.
+  ///
+  /// Legacy semester ids were strings, which the web discards. They are
+  /// renumbered positionally so the blocks survive rather than being dropped.
+  AppState? _migrateLegacyState(Map<String, dynamic> fields) {
+    final legacy = fields['semesters'];
+    if (legacy is! List) return null;
+
+    final semesters = <Semester>[];
+    for (var i = 0; i < legacy.length; i++) {
+      final entry = legacy[i];
+      if (entry is! Map) continue;
+      final m = Map<String, dynamic>.from(entry);
+      semesters.add(Semester.tryFromMap({
+        ...m,
+        'id': i,
+        // Legacy builds used `label`/`isRunning`; the shared contract uses
+        // `name`/`running`.
+        'name': m['name'] ?? m['label'] ?? '',
+        'running': m['running'] ?? m['isRunning'] ?? false,
+      })!);
+    }
+
+    return AppState(
+      semesters: semesters,
+      semesterCounter: semesters.length,
+    );
   }
 
   // ── Reviews ────────────────────────────────────────────────────────────────
