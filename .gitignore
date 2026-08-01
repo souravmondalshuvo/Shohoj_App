@@ -47,3 +47,10 @@ app.*.map.json
 # Firebase config — contains API keys, do not commit
 android/app/google-services.json
 ios/Runner/GoogleService-Info.plist
+
+# Firestore rules and indexes live in the Shohoj web repo, which is the single
+# source of truth for them. Both repos deploy to the same Firebase project and
+# a rules deploy replaces the whole ruleset, so these must never be deployed
+# or committed from here.
+firestore.rules
+firestore.indexes.json
