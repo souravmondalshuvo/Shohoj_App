@@ -44,3 +44,33 @@ jobs:
 
       - name: Test
         run: flutter test
+
+  firestore-rules:
+    name: Firestore rules contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: test_rules/package-lock.json
+
+      # The Firestore emulator is a Java process.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install
+        run: npm ci
+        working-directory: test_rules
+
+      # Fetches the web repo's live rules, then runs the app's payload shapes
+      # against them. Goes red if the web changes its rules in a way that would
+      # reject a write from this app — which is the point.
+      - name: Rules tests
+        run: npm test
+        working-directory: test_rules
