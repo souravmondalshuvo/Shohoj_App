@@ -1,0 +1,46 @@
+name: CI
+
+# Analysis and tests on every push and pull request.
+#
+# Deliberately no build job yet. `android/app/google-services.json` is
+# gitignored, so an Android build cannot succeed on a runner without a Firebase
+# config secret, and the iOS xcconfigs pin FLUTTER_BUILD_DIR to a machine-local
+# path that will not resolve here. Both are tracked separately.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run redundant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze-and-test:
+    name: Analyze + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          # Pinned rather than `latest`: an unannounced Flutter release should
+          # not be able to turn the suite red on an unrelated pull request.
+          flutter-version: 3.41.8
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
