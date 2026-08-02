@@ -51,6 +51,24 @@ class FirestoreService {
     return _migrateLegacyState(fields);
   }
 
+  /// Streams the raw `data` field of the shared state document.
+  ///
+  /// Emits the string rather than a decoded [AppState] because the sync layer
+  /// compares payloads by fingerprint before deciding to apply anything, and
+  /// decoding first would discard the exact bytes that comparison needs.
+  ///
+  /// Yields `null` while signed out or when the document has no payload.
+  Stream<String?> watchRawState() {
+    final ref = _userDoc;
+    if (ref == null) return Stream<String?>.value(null);
+    return ref.snapshots().map((snap) {
+      if (!snap.exists) return null;
+      final fields = snap.data() as Map<String, dynamic>?;
+      final raw = fields?['data'];
+      return raw is String ? raw : null;
+    });
+  }
+
   /// Writes the shared state document.
   ///
   /// Also clears the legacy top-level `semesters` field. Without this the merged
