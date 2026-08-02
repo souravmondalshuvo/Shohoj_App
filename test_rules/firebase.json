@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Emulator config for the rules tests only.",
+    "Deliberately declares no 'firestore' block. The web repo owns the real",
+    "rules and indexes, and a 'firestore' key here would make this directory a",
+    "second path from which they could be deployed over the web's ruleset.",
+    "The rules under test are loaded programmatically by initializeTestEnvironment."
+  ],
+  "emulators": {
+    "firestore": {
+      "port": 8080
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
+  }
+}
