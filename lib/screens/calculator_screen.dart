@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +10,7 @@ import '../models/course.dart';
 import '../models/semester.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../services/sync/user_state_sync.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/gpa_chart.dart';
@@ -29,6 +32,9 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   /// department — survive a save instead of being dropped.
   AppState _state = AppState();
 
+  late final UserStateSync _sync = UserStateSync(firestore: _fs);
+  StreamSubscription<AppState>? _remoteSub;
+
   bool _loading = true;
   String? _selectedDept;
 
@@ -40,8 +46,17 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _remoteSub?.cancel();
+    _sync.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final loaded = await _fs.loadState();
+    if (!mounted) return;
+
     setState(() {
       _state = loaded ?? AppState();
       if (_state.semesters.isEmpty) {
@@ -50,6 +65,25 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       }
       _loading = false;
     });
+
+    // Seed the comparison baseline with what was actually loaded, so the first
+    // genuine remote change is measured against it rather than against nothing.
+    _sync.seed(_state);
+    _remoteSub = _sync.remoteChanges.listen(_applyRemote, onError: (_) {});
+    _sync.start();
+  }
+
+  /// Applies a change made on another device — the web app, or a second phone.
+  void _applyRemote(AppState incoming) {
+    if (!mounted) return;
+    setState(() => _state = incoming);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Updated from another device'),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   /// Allocates the next semester id.
@@ -91,7 +125,9 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   }
 
   Future<void> _save() async {
-    await _fs.saveState(_state);
+    // Debounced and serialised by the sync layer, so a burst of edits is one
+    // write and a queued save cannot overtake an in-flight one.
+    await _sync.save(_state);
   }
 
   double? get _cgpa {
