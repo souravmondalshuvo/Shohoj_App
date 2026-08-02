@@ -51,6 +51,14 @@ ios/Runner/GoogleService-Info.plist
 # Gradle build output. The root-level /build/ rule above does not match this.
 android/build/
 
+# Rules tests: deps, and the web repo's rules fetched at test time. The fetched
+# copy is deliberately not committed — a vendored copy would drift from what the
+# web actually deploys, and a drifted copy tests nothing.
+test_rules/node_modules/
+test_rules/.web-firestore.rules
+firestore-debug.log
+firebase-debug.log
+
 # iCloud Drive conflict copies. This repo lives under ~/Documents, so a sync
 # race leaves byte-identical duplicates like `app_state 2.dart` next to the
 # original. Inside lib/ they get analysed and compiled as real source.
