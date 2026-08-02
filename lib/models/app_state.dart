@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../core/js_json.dart';
 import 'semester.dart';
 
 /// Keys this model owns. Anything else is round-tripped untouched via
@@ -112,5 +113,8 @@ class AppState {
   }
 
   /// Encodes to the JSON string stored in the `data` field.
-  String encode() => jsonEncode(toMap());
+  ///
+  /// Uses JavaScript number formatting so the app and the web produce
+  /// byte-identical JSON for identical state — see [jsCompatJsonEncode].
+  String encode() => jsCompatJsonEncode(toMap());
 }
