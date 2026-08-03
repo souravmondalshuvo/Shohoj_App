@@ -32,7 +32,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   /// department — survive a save instead of being dropped.
   AppState _state = AppState();
 
-  late final UserStateSync _sync = UserStateSync(firestore: _fs);
+  late final UserStateSync _sync = UserStateSync(store: _fs);
   StreamSubscription<AppState>? _remoteSub;
 
   bool _loading = true;
