@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:clock/clock.dart';
+
 import '../../models/app_state.dart';
-import '../firestore_service.dart';
 import 'sync_decision.dart';
+import 'user_state_store.dart';
 
 /// Keeps `users/{uid}` in step with the Shohoj web app in both directions.
 ///
@@ -10,12 +12,14 @@ import 'sync_decision.dart';
 /// [decideRemoteSnapshot] before anything is applied. The guards matter as much
 /// as the listener — see the ordering notes on that function.
 ///
-/// Structured as a coordinator over [FirestoreService] so the interesting logic
-/// stays in the pure functions next door, which are unit-tested without Firebase.
+/// Depends on the narrow [UserStateStore] rather than `FirestoreService` so the
+/// coordination — debounce, guard wiring, write ordering — is testable without
+/// Firebase. Time comes from `package:clock` for the same reason: `fakeAsync`
+/// can drive the 5 s own-write window without the tests waiting 5 s.
 class UserStateSync {
-  UserStateSync({required FirestoreService firestore}) : _fs = firestore;
+  UserStateSync({required UserStateStore store}) : _fs = store;
 
-  final FirestoreService _fs;
+  final UserStateStore _fs;
 
   final _remoteChanges = StreamController<AppState>.broadcast();
 
@@ -28,6 +32,17 @@ class UserStateSync {
 
   /// When this client last wrote. Snapshots arriving inside [kLocalWriteGrace]
   /// of it are that write echoing back.
+  ///
+  /// Defence in depth rather than load-bearing here. [_write] sets [_localRaw]
+  /// to the payload being written, so an echo already compares equal by
+  /// fingerprint and is dropped as [RemoteAction.ignoreIdentical] even with
+  /// this guard removed — verified by mutation testing, where deleting the
+  /// guard failed no coordinator test.
+  ///
+  /// Kept because it short-circuits before a parse-and-re-serialise, because it
+  /// keeps this implementation comparable to the web's, and because it is
+  /// genuinely load-bearing there: the web's baseline comes from localStorage,
+  /// which can diverge from what was actually written.
   DateTime? _localWriteAt;
 
   /// The payload this client believes is current, used as the comparison side
@@ -86,7 +101,7 @@ class UserStateSync {
       isFirstSnapshot: _isFirstSnapshot,
       sinceLocalWrite: _localWriteAt == null
           ? const Duration(days: 1)
-          : DateTime.now().difference(_localWriteAt!),
+          : clock.now().difference(_localWriteAt!),
       hasPendingSave: _hasPendingSave,
       localRaw: _localRaw,
       remoteRaw: remoteRaw,
@@ -162,7 +177,7 @@ class UserStateSync {
   Future<bool> _write(AppState state) async {
     // Recorded before the write so the echoing snapshot is inside the grace
     // window however fast Firestore turns it around.
-    _localWriteAt = DateTime.now();
+    _localWriteAt = clock.now();
     _localRaw = state.encode();
     try {
       await _fs.saveState(state);
