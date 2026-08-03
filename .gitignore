@@ -51,6 +51,11 @@ ios/Runner/GoogleService-Info.plist
 # Gradle build output. The root-level /build/ rule above does not match this.
 android/build/
 
+# Per-machine Xcode overrides. See ios/Flutter/Local.xcconfig.example — a
+# machine-specific build path must never be committed, or it resolves somewhere
+# arbitrary on every other checkout and breaks CI.
+ios/Flutter/Local.xcconfig
+
 # Rules tests: deps, and the web repo's rules fetched at test time. The fetched
 # copy is deliberately not committed — a vendored copy would drift from what the
 # web actually deploys, and a drifted copy tests nothing.
