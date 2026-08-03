@@ -85,6 +85,21 @@ Shohoj only allows Google accounts ending with:
 
 The app checks this after Google account selection and again after Firebase sign-in. Rejected users are signed out immediately.
 
+## Per-machine Xcode settings
+
+`ios/Flutter/Debug.xcconfig` and `Release.xcconfig` end with an optional
+`#include? "Local.xcconfig"`. That file is gitignored, so anything in it applies
+only to your machine. Copy `ios/Flutter/Local.xcconfig.example` to get started.
+
+The case this exists for: if the repo lives in an iCloud-synced folder
+(`~/Documents`, `~/Desktop`), Xcode code signing fails on extended attributes
+the sync daemon attaches to files under the build directory. Redirecting
+`FLUTTER_BUILD_DIR` outside the synced tree avoids it.
+
+Keep machine-specific paths out of the committed xcconfigs — they are relative
+to the repo, so they resolve somewhere arbitrary on any other checkout and make
+an iOS CI job impossible.
+
 ## iOS Notes
 
 The iOS app uses a platform-adaptive liquid-glass style for cards and tab navigation. Simulator builds disable simulator-only code signing to avoid macOS extended-attribute signing failures while keeping real-device signing available.
