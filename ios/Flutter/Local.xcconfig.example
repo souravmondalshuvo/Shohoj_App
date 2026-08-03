@@ -1,0 +1,11 @@
+// Copy to Local.xcconfig for per-machine build settings. That file is
+// gitignored; this example is not.
+//
+// Why this exists: if the repo lives in an iCloud-synced folder (~/Documents,
+// ~/Desktop), Xcode code signing fails on extended attributes that the sync
+// daemon attaches to files under the build directory. Redirecting the build
+// output outside the synced tree avoids it.
+//
+// The path is relative to ios/Flutter/, so adjust it for your own machine.
+//
+// FLUTTER_BUILD_DIR=../../../../private/tmp/shohoj_flutter_build
