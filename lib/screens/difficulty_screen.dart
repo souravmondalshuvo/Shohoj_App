@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/faculty_review.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
@@ -14,7 +15,7 @@ class DifficultyScreen extends StatefulWidget {
 
 class _DifficultyScreenState extends State<DifficultyScreen> {
   final _fs = FirestoreService();
-  List<DifficultyEntry>? _all;
+  List<CourseDifficulty>? _all;
   String _error = '';
   _SortMode _sort = _SortMode.difficulty;
   String _filterDept = '';
@@ -42,7 +43,7 @@ class _DifficultyScreenState extends State<DifficultyScreen> {
     }
   }
 
-  List<DifficultyEntry> get _filtered {
+  List<CourseDifficulty> get _filtered {
     var list = _all ?? [];
     if (_filterDept.isNotEmpty) {
       list = list.where((e) => e.courseCode.startsWith(_filterDept)).toList();
@@ -52,14 +53,14 @@ class _DifficultyScreenState extends State<DifficultyScreen> {
       list = list
           .where((e) =>
               e.courseCode.contains(q) ||
-              e.courseName.toUpperCase().contains(q))
+              e.courseCode.toUpperCase().contains(q))
           .toList();
     }
     switch (_sort) {
       case _SortMode.difficulty:
         list.sort((a, b) => b.avgDifficulty.compareTo(a.avgDifficulty));
       case _SortMode.rating:
-        list.sort((a, b) => b.avgRating.compareTo(a.avgRating));
+        list.sort((a, b) => b.avgWorkload.compareTo(a.avgWorkload));
       case _SortMode.reviews:
         list.sort((a, b) => b.reviewCount.compareTo(a.reviewCount));
       case _SortMode.code:
@@ -207,7 +208,7 @@ class _DifficultyScreenState extends State<DifficultyScreen> {
 // ── Difficulty card ────────────────────────────────────────────────────────────
 
 class _DifficultyCard extends StatelessWidget {
-  final DifficultyEntry entry;
+  final CourseDifficulty entry;
   const _DifficultyCard({required this.entry});
 
   Color _diffColor(double v) {
@@ -279,7 +280,7 @@ class _DifficultyCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  entry.courseName,
+                  entry.band,
                   style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -303,7 +304,7 @@ class _DifficultyCard extends StatelessWidget {
                     const Icon(Icons.star_rounded, size: 13, color: AppTheme.gold),
                     const SizedBox(width: 2),
                     Text(
-                      entry.avgRating.toStringAsFixed(1),
+                      entry.avgWorkload.toStringAsFixed(1),
                       style: const TextStyle(color: AppTheme.gold, fontSize: 12, fontWeight: FontWeight.w600),
                     ),
                     const Spacer(),
