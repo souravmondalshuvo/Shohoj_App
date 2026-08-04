@@ -2,22 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/app_state.dart';
 import '../models/semester.dart';
+import '../core/review_aggregation.dart';
+import '../models/faculty_review.dart';
 import 'sync/user_state_store.dart';
-
-class DifficultyEntry {
-  final String courseCode;
-  final String courseName;
-  final double avgDifficulty;
-  final double avgRating;
-  final int reviewCount;
-  const DifficultyEntry({
-    required this.courseCode,
-    required this.courseName,
-    required this.avgDifficulty,
-    required this.avgRating,
-    required this.reviewCount,
-  });
-}
 
 class FirestoreService implements UserStateStore {
   final _db = FirebaseFirestore.instance;
@@ -114,199 +101,113 @@ class FirestoreService implements UserStateStore {
     );
   }
 
-  // ── Reviews ────────────────────────────────────────────────────────────────
+  // ── Faculty reviews (shared with the web app) ──────────────────────────────
+  //
+  // The corpus lives in `facultyReviews`, written only by the Cloudflare Worker
+  // and readable by any BRACU account. Clients are denied create and update by
+  // the rules, so nothing here writes.
+  //
+  // Every query below is backed by an index the web repo already deploys
+  // (facultyInitials+createdAt, facultyInitials+courseCode+createdAt,
+  // courseCode+createdAt). This repo cannot deploy indexes, so a query outside
+  // that set would fail at runtime rather than at build time.
 
-  Stream<QuerySnapshot> reviewsForCourse(String courseCode) {
-    return _db
-        .collection('reviews')
-        .where('courseCode', isEqualTo: courseCode)
-        .orderBy('createdAt', descending: true)
-        .limit(50)
-        .snapshots();
-  }
+  static const _reviewsCollection = 'facultyReviews';
 
-  Future<QuerySnapshot> reviewsForCourseFuture(String courseCode) {
-    return _db
-        .collection('reviews')
-        .where('courseCode', isEqualTo: courseCode)
-        .orderBy('createdAt', descending: true)
-        .limit(50)
-        .get();
-  }
+  List<FacultyReview> _toReviews(QuerySnapshot snap) => snap.docs
+      .map((d) => FacultyReview.fromMap(d.id, d.data() as Map<String, dynamic>))
+      .toList();
 
-  Future<QuerySnapshot> reviewsForFaculty(String facultyName) {
+  /// Reviews for one course, newest first.
+  Stream<List<FacultyReview>> reviewsForCourse(String courseCode) {
     return _db
-        .collection('reviews')
-        .where('facultyName', isEqualTo: facultyName)
+        .collection(_reviewsCollection)
+        .where('courseCode', isEqualTo: courseCode.toUpperCase())
         .orderBy('createdAt', descending: true)
         .limit(100)
-        .get();
+        .snapshots()
+        .map(_toReviews);
   }
 
-  Stream<QuerySnapshot> reviewsForDept(String deptPrefix) {
-    final end = '${deptPrefix}Z';
+  /// Reviews for one faculty member, newest first.
+  Future<List<FacultyReview>> reviewsForFaculty(String initials) async {
+    final snap = await _db
+        .collection(_reviewsCollection)
+        .where('facultyInitials', isEqualTo: initials.toUpperCase())
+        .orderBy('createdAt', descending: true)
+        .limit(200)
+        .get();
+    return _toReviews(snap);
+  }
+
+  /// Reviews for a whole department, by course-code prefix.
+  ///
+  /// A range filter and ordering on the same field needs only the automatic
+  /// single-field index, so this works without a composite.
+  Stream<List<FacultyReview>> reviewsForDept(String deptPrefix) {
+    final prefix = deptPrefix.toUpperCase();
     return _db
-        .collection('reviews')
-        .where('courseCode', isGreaterThanOrEqualTo: deptPrefix)
-        .where('courseCode', isLessThan: end)
+        .collection(_reviewsCollection)
+        .where('courseCode', isGreaterThanOrEqualTo: prefix)
+        .where('courseCode', isLessThan: '${prefix}Z')
         .orderBy('courseCode')
-        .limit(200)
-        .snapshots();
+        .limit(300)
+        .snapshots()
+        .map(_toReviews);
   }
 
-  Future<void> submitReview({
-    required String courseCode,
-    required String courseName,
-    required String facultyName,
-    required int rating,
-    required String comment,
-    required int difficulty,
+  /// The whole corpus, for the difficulty map.
+  Future<List<FacultyReview>> allReviews({int limit = 3000}) async {
+    final snap = await _db.collection(_reviewsCollection).limit(limit).get();
+    return _toReviews(snap);
+  }
+
+  /// The difficulty map: the whole corpus rolled up per course, hardest first.
+  Future<List<CourseDifficulty>> loadDifficultyMap({
+    int minReviews = kMinReviewsForDifficulty,
   }) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    await _db.collection('reviews').add({
-      'courseCode': courseCode,
-      'courseName': courseName,
-      'facultyName': facultyName,
-      'rating': rating,
-      'comment': comment,
-      'difficulty': difficulty,
-      'uid': user.uid,
-      'displayName': user.displayName,
-      'photoURL': user.photoURL,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    return aggregateDifficulty(await allReviews(), minReviews: minReviews);
   }
 
-  // ── Difficulty Map ─────────────────────────────────────────────────────────
-
-  Future<List<DifficultyEntry>> loadDifficultyMap({int minReviews = 3}) async {
-    final snap = await _db
-        .collection('reviews')
-        .where('difficulty', isGreaterThan: 0)
-        .limit(5000)
-        .get();
-
-    final byCourse = <String, List<Map<String, dynamic>>>{};
-    for (final doc in snap.docs) {
-      final d = doc.data();
-      final code = (d['courseCode'] as String?)?.trim().toUpperCase();
-      if (code == null || code.isEmpty) continue;
-      byCourse.putIfAbsent(code, () => []).add(d);
+  /// Every faculty member who appears in the corpus, with their aggregates.
+  Future<List<FacultyStats>> knownFaculty() async {
+    final reviews = await allReviews();
+    final byFaculty = <String, List<FacultyReview>>{};
+    for (final r in reviews) {
+      if (r.facultyInitials.isEmpty) continue;
+      byFaculty.putIfAbsent(r.facultyInitials, () => []).add(r);
     }
-
-    final entries = <DifficultyEntry>[];
-    for (final entry in byCourse.entries) {
-      final revs = entry.value;
-      if (revs.length < minReviews) continue;
-
-      double totalDiff = 0, totalRating = 0;
-      int diffCount = 0, ratingCount = 0;
-      String courseName = entry.key;
-
-      for (final r in revs) {
-        final diff = (r['difficulty'] as num?)?.toDouble();
-        final rating = (r['rating'] as num?)?.toDouble();
-        final name = r['courseName'] as String?;
-        if (name != null && name.isNotEmpty && courseName == entry.key) {
-          courseName = name;
-        }
-        if (diff != null && diff > 0) {
-          totalDiff += diff;
-          diffCount++;
-        }
-        if (rating != null && rating > 0) {
-          totalRating += rating;
-          ratingCount++;
-        }
-      }
-
-      entries.add(DifficultyEntry(
-        courseCode: entry.key,
-        courseName: courseName,
-        avgDifficulty: diffCount > 0 ? totalDiff / diffCount : 0,
-        avgRating: ratingCount > 0 ? totalRating / ratingCount : 0,
-        reviewCount: revs.length,
-      ));
-    }
-
-    entries.sort((a, b) => b.avgDifficulty.compareTo(a.avgDifficulty));
-    return entries;
+    final out = byFaculty.entries
+        .map((e) => aggregateFaculty(e.key, e.value))
+        .toList()
+      ..sort((a, b) => a.initials.compareTo(b.initials));
+    return out;
   }
 
-  // ── Faculty ────────────────────────────────────────────────────────────────
-
-  Future<List<String>> searchFacultyNames(String query) async {
-    if (query.length < 2) return [];
-    final snap = await _db
-        .collection('reviews')
-        .where('facultyName', isGreaterThanOrEqualTo: query)
-        .where('facultyName', isLessThan: '${query}z')
-        .limit(50)
-        .get();
-
-    final names = <String>{};
-    for (final doc in snap.docs) {
-      final name = doc.data()['facultyName'] as String?;
-      if (name != null && name.isNotEmpty) names.add(name);
-    }
-    return names.toList()..sort();
+  /// One faculty member's aggregate, or null when they have no reviews.
+  Future<FacultyStats?> facultyStats(String initials) async {
+    final reviews = await reviewsForFaculty(initials);
+    if (reviews.isEmpty) return null;
+    return aggregateFaculty(initials.toUpperCase(), reviews);
   }
 
-  Future<List<String>> getKnownFaculty() async {
-    final snap = await _db
-        .collection('reviews')
-        .limit(2000)
-        .get();
-    final names = <String>{};
-    for (final doc in snap.docs) {
-      final name = doc.data()['facultyName'] as String?;
-      if (name != null && name.trim().isNotEmpty) names.add(name.trim());
-    }
-    final sorted = names.toList()..sort();
-    return sorted;
-  }
+  // ── Faculty profiles ───────────────────────────────────────────────────────
+  //
+  // Admin-seeded and read-only. The seed is explicitly partial, so a lookup
+  // miss is ordinary — callers fall back to showing the initials.
 
-  Future<Map<String, dynamic>> getFacultyStats(String facultyName) async {
-    final snap = await _db
-        .collection('reviews')
-        .where('facultyName', isEqualTo: facultyName)
-        .limit(200)
-        .get();
-
-    if (snap.docs.isEmpty) return {};
-
-    double totalRating = 0, totalDiff = 0;
-    int rCount = 0, dCount = 0;
-    final courses = <String, List<Map<String, dynamic>>>{};
-
-    for (final doc in snap.docs) {
-      final d = doc.data();
-      final code = (d['courseCode'] as String?)?.trim().toUpperCase() ?? '';
-      final rating = (d['rating'] as num?)?.toDouble();
-      final diff = (d['difficulty'] as num?)?.toDouble();
-      if (rating != null && rating > 0) { totalRating += rating; rCount++; }
-      if (diff != null && diff > 0) { totalDiff += diff; dCount++; }
-      courses.putIfAbsent(code, () => []).add(d);
-    }
-
+  Future<Map<String, FacultyProfile>> facultyProfiles({int limit = 500}) async {
+    final snap = await _db.collection('facultyProfiles').limit(limit).get();
     return {
-      'totalReviews': snap.docs.length,
-      'avgRating': rCount > 0 ? totalRating / rCount : null,
-      'avgDifficulty': dCount > 0 ? totalDiff / dCount : null,
-      'courses': courses,
-      'docs': snap.docs.map((d) => d.data()).toList(),
+      for (final d in snap.docs)
+        d.id.toUpperCase(): FacultyProfile.fromMap(d.id, d.data()),
     };
   }
 
-  // ── Faculty profile collection ─────────────────────────────────────────────
-
-  Future<QuerySnapshot> searchFaculty(String query) {
-    return _db
-        .collection('faculty')
-        .where('nameLower', isGreaterThanOrEqualTo: query.toLowerCase())
-        .where('nameLower', isLessThanOrEqualTo: '${query.toLowerCase()}')
-        .limit(20)
-        .get();
+  Future<FacultyProfile?> facultyProfile(String initials) async {
+    final doc =
+        await _db.collection('facultyProfiles').doc(initials.toUpperCase()).get();
+    if (!doc.exists) return null;
+    return FacultyProfile.fromMap(doc.id, doc.data() as Map<String, dynamic>);
   }
 }
