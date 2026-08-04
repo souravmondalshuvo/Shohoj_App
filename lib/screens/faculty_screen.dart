@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../core/review_aggregation.dart';
+import '../models/faculty_review.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
@@ -14,7 +16,8 @@ class _FacultyScreenState extends State<FacultyScreen> {
   final _fs = FirestoreService();
   final _searchCtrl = TextEditingController();
   String _search = '';
-  List<String>? _allFaculty;
+  List<FacultyStats>? _allFaculty;
+  Map<String, FacultyProfile> _profiles = const {};
   bool _loading = true;
 
   @override
@@ -30,15 +33,32 @@ class _FacultyScreenState extends State<FacultyScreen> {
   }
 
   Future<void> _loadAll() async {
-    final list = await _fs.getKnownFaculty();
-    if (mounted) setState(() { _allFaculty = list; _loading = false; });
+    // Profiles are a display concern only — the corpus is keyed by initials, so
+    // a missing profile degrades to showing the initials rather than failing.
+    final results = await Future.wait([
+      _fs.knownFaculty(),
+      _fs.facultyProfiles(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _allFaculty = results[0] as List<FacultyStats>;
+      _profiles = results[1] as Map<String, FacultyProfile>;
+      _loading = false;
+    });
   }
 
-  List<String> get _filtered {
+  String _nameFor(String initials) =>
+      _profiles[initials]?.displayName ?? initials;
+
+  List<FacultyStats> get _filtered {
     final all = _allFaculty ?? [];
     if (_search.isEmpty) return all;
     final q = _search.toLowerCase();
-    return all.where((n) => n.toLowerCase().contains(q)).toList();
+    return all
+        .where((f) =>
+            f.initials.toLowerCase().contains(q) ||
+            _nameFor(f.initials).toLowerCase().contains(q))
+        .toList();
   }
 
   @override
@@ -76,8 +96,8 @@ class _FacultyScreenState extends State<FacultyScreen> {
     if (_loading) {
       return const Center(child: CircularProgressIndicator(color: AppTheme.green));
     }
-    final names = _filtered;
-    if (names.isEmpty) {
+    final faculty = _filtered;
+    if (faculty.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -94,12 +114,19 @@ class _FacultyScreenState extends State<FacultyScreen> {
     }
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
-      itemCount: names.length,
+      itemCount: faculty.length,
       itemBuilder: (ctx, i) => _FacultyListTile(
-        name: names[i],
+        initials: faculty[i].initials,
+        name: _nameFor(faculty[i].initials),
+        reviewCount: faculty[i].reviewCount,
         onTap: () => Navigator.push(
           ctx,
-          MaterialPageRoute(builder: (_) => FacultyDetailScreen(facultyName: names[i])),
+          MaterialPageRoute(
+            builder: (_) => FacultyDetailScreen(
+              initials: faculty[i].initials,
+              displayName: _nameFor(faculty[i].initials),
+            ),
+          ),
         ),
       ),
     );
@@ -107,15 +134,18 @@ class _FacultyScreenState extends State<FacultyScreen> {
 }
 
 class _FacultyListTile extends StatelessWidget {
+  final String initials;
   final String name;
+  final int reviewCount;
   final VoidCallback onTap;
-  const _FacultyListTile({required this.name, required this.onTap});
+  const _FacultyListTile({
+    required this.initials,
+    required this.name,
+    required this.reviewCount,
+    required this.onTap,
+  });
 
-  String get _initials {
-    final parts = name.trim().split(' ');
-    if (parts.length == 1) return parts[0][0].toUpperCase();
-    return parts.where((p) => p.isNotEmpty).take(2).map((p) => p[0].toUpperCase()).join();
-  }
+  String get _initials => initials;
 
   @override
   Widget build(BuildContext context) {
@@ -150,8 +180,13 @@ class _FacultyListTile extends StatelessWidget {
 // ── Faculty Detail Screen ────────────────────────────────────────────────────
 
 class FacultyDetailScreen extends StatefulWidget {
-  final String facultyName;
-  const FacultyDetailScreen({super.key, required this.facultyName});
+  final String initials;
+  final String displayName;
+  const FacultyDetailScreen({
+    super.key,
+    required this.initials,
+    required this.displayName,
+  });
 
   @override
   State<FacultyDetailScreen> createState() => _FacultyDetailScreenState();
@@ -159,7 +194,8 @@ class FacultyDetailScreen extends StatefulWidget {
 
 class _FacultyDetailScreenState extends State<FacultyDetailScreen> {
   final _fs = FirestoreService();
-  Map<String, dynamic>? _stats;
+  FacultyStats? _stats;
+  List<FacultyReview> _reviews = const [];
   bool _loading = true;
 
   @override
@@ -169,14 +205,21 @@ class _FacultyDetailScreenState extends State<FacultyDetailScreen> {
   }
 
   Future<void> _load() async {
-    final stats = await _fs.getFacultyStats(widget.facultyName);
-    if (mounted) setState(() { _stats = stats; _loading = false; });
+    final reviews = await _fs.reviewsForFaculty(widget.initials);
+    if (!mounted) return;
+    setState(() {
+      _reviews = reviews;
+      _stats = reviews.isEmpty
+          ? null
+          : aggregateFaculty(widget.initials.toUpperCase(), reviews);
+      _loading = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.facultyName, maxLines: 1, overflow: TextOverflow.ellipsis)),
+      appBar: AppBar(title: Text(widget.displayName, maxLines: 1, overflow: TextOverflow.ellipsis)),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppTheme.green))
           : _buildBody(),
@@ -184,17 +227,22 @@ class _FacultyDetailScreenState extends State<FacultyDetailScreen> {
   }
 
   Widget _buildBody() {
-    if (_stats == null || _stats!.isEmpty) {
+    if (_stats == null) {
       return const Center(
         child: Text('No reviews found.', style: TextStyle(color: AppTheme.textSecondary)),
       );
     }
 
-    final totalReviews = _stats!['totalReviews'] as int;
-    final avgRating = _stats!['avgRating'] as double?;
-    final avgDiff = _stats!['avgDifficulty'] as double?;
-    final courses = _stats!['courses'] as Map<String, List<Map<String, dynamic>>>;
-    final docs = _stats!['docs'] as List<Map<String, dynamic>>;
+    final totalReviews = _stats!.reviewCount;
+    final avgRating = _stats!.avgQuality;
+    final avgDiff = _stats!.avgDifficulty;
+
+    // Review counts per course taught, for the chips below.
+    final courses = <String, int>{};
+    for (final r in _reviews) {
+      if (r.courseCode.isEmpty) continue;
+      courses[r.courseCode] = (courses[r.courseCode] ?? 0) + 1;
+    }
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
@@ -207,7 +255,7 @@ class _FacultyDetailScreenState extends State<FacultyDetailScreen> {
               _StatCell(label: 'Reviews', value: '$totalReviews'),
               const _Divider(),
               _StatCell(
-                label: 'Avg Rating',
+                label: 'Teaching',
                 value: avgRating != null ? avgRating.toStringAsFixed(2) : '—',
                 color: AppTheme.gold,
               ),
@@ -238,7 +286,7 @@ class _FacultyDetailScreenState extends State<FacultyDetailScreen> {
                 border: Border.all(color: AppTheme.border2),
               ),
               child: Text(
-                '$code (${courses[code]!.length})',
+                '$code (${courses[code]})',
                 style: const TextStyle(color: AppTheme.green, fontSize: 12, fontWeight: FontWeight.w600),
               ),
             )).toList(),
@@ -250,7 +298,7 @@ class _FacultyDetailScreenState extends State<FacultyDetailScreen> {
           padding: EdgeInsets.only(bottom: 8),
           child: Text('Reviews', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.w600)),
         ),
-        ...docs.map((d) => _ReviewCard(data: d)),
+        ..._reviews.map((r) => _ReviewCard(review: r)),
       ],
     );
   }
@@ -294,15 +342,17 @@ class _Divider extends StatelessWidget {
 }
 
 class _ReviewCard extends StatelessWidget {
-  final Map<String, dynamic> data;
-  const _ReviewCard({required this.data});
+  final FacultyReview review;
+  const _ReviewCard({required this.review});
 
   @override
   Widget build(BuildContext context) {
-    final rating = (data['rating'] as num?)?.toInt() ?? 0;
-    final difficulty = (data['difficulty'] as num?)?.toInt() ?? 0;
-    final comment = data['comment'] as String? ?? '';
-    final code = data['courseCode'] as String? ?? '';
+    // The star row shows teaching quality — the closest single number to what
+    // the old one-dimensional rating meant.
+    final rating = review.ratings['teaching'] ?? 0;
+    final difficulty = review.ratings['difficulty'] ?? 0;
+    final comment = review.text;
+    final code = review.courseCode;
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 10),
       child: Column(
@@ -334,8 +384,10 @@ class _ReviewCard extends StatelessWidget {
             children: [
               if (difficulty > 0) _DifficultyChip(difficulty),
               const Spacer(),
+              // No author is shown because none exists: review documents in
+              // the shared corpus carry no uid, email or display name.
               Text(
-                data['displayName'] as String? ?? 'Anonymous',
+                review.semester.isNotEmpty ? review.semester : 'Anonymous',
                 style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
               ),
             ],
