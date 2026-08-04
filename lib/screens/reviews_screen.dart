@@ -1,5 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../models/faculty_review.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
@@ -89,24 +89,42 @@ class _ReviewsScreenState extends State<ReviewsScreen> with SingleTickerProvider
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showSubmitSheet(context),
-        backgroundColor: AppTheme.green,
-        foregroundColor: Colors.black,
-        icon: const Icon(Icons.rate_review_rounded),
-        label: const Text('Write a Review', style: TextStyle(fontWeight: FontWeight.w700)),
+        onPressed: () => _showSubmitUnavailable(context),
+        backgroundColor: AppTheme.surface,
+        foregroundColor: AppTheme.textSecondary,
+        icon: const Icon(Icons.rate_review_outlined),
+        label: const Text('Write a Review',
+            style: TextStyle(fontWeight: FontWeight.w700)),
       ),
     );
   }
 
-  void _showSubmitSheet(BuildContext context) {
-    showModalBottomSheet(
+  /// Submitting is not wired up yet.
+  ///
+  /// Reviews in the shared corpus are written only by the Cloudflare Worker,
+  /// which computes the pseudonymous document id server-side; clients are
+  /// denied create by the rules. Saying so is better than a form that silently
+  /// fails, which is what shipped before.
+  void _showSubmitUnavailable(BuildContext context) {
+    showDialog<void>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text('Not available yet',
+            style: TextStyle(color: AppTheme.textPrimary, fontSize: 17)),
+        content: const Text(
+          'Writing reviews from the app is still being built. Reviews are '
+          'submitted anonymously through the Shohoj web app for now — they '
+          'show up here as soon as they are posted.',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK', style: TextStyle(color: AppTheme.green)),
+          ),
+        ],
       ),
-      builder: (_) => const _ReviewSubmitSheet(),
     );
   }
 }
@@ -236,13 +254,13 @@ class _DeptReviewsScreen extends StatelessWidget {
     final fs = FirestoreService();
     return Scaffold(
       appBar: AppBar(title: Text(deptCode)),
-      body: StreamBuilder<QuerySnapshot>(
+      body: StreamBuilder<List<FacultyReview>>(
         stream: fs.reviewsForDept(deptCode),
         builder: (ctx, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: AppTheme.green));
           }
-          final docs = snap.data?.docs ?? [];
+          final docs = snap.data ?? const <FacultyReview>[];
           if (docs.isEmpty) {
             return Center(
               child: Column(
@@ -257,11 +275,9 @@ class _DeptReviewsScreen extends StatelessWidget {
             );
           }
           // Group by course
-          final byCourse = <String, List<Map<String, dynamic>>>{};
-          for (final doc in docs) {
-            final d = doc.data() as Map<String, dynamic>;
-            final code = d['courseCode'] as String? ?? '';
-            byCourse.putIfAbsent(code, () => []).add(d);
+          final byCourse = <String, List<FacultyReview>>{};
+          for (final r in docs) {
+            byCourse.putIfAbsent(r.courseCode, () => []).add(r);
           }
           final codes = byCourse.keys.toList()..sort();
           return ListView.builder(
@@ -270,7 +286,11 @@ class _DeptReviewsScreen extends StatelessWidget {
             itemBuilder: (ctx2, i) {
               final code = codes[i];
               final revs = byCourse[code]!;
-              final avgRating = revs.map((r) => (r['rating'] as num?)?.toDouble() ?? 0).fold(0.0, (a, b) => a + b) / revs.length;
+              // Teaching quality stands in for the old single rating.
+              final avgRating = revs
+                      .map((r) => (r.ratings['teaching'] ?? 0).toDouble())
+                      .fold(0.0, (a, b) => a + b) /
+                  revs.length;
               return GlassCard(
                 margin: const EdgeInsets.only(bottom: 10),
                 onTap: () => Navigator.push(
@@ -321,13 +341,13 @@ class _CourseReviewsScreen extends StatelessWidget {
     final fs = FirestoreService();
     return Scaffold(
       appBar: AppBar(title: Text(courseCode)),
-      body: StreamBuilder<QuerySnapshot>(
+      body: StreamBuilder<List<FacultyReview>>(
         stream: fs.reviewsForCourse(courseCode),
         builder: (ctx, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: AppTheme.green));
           }
-          final docs = snap.data?.docs ?? [];
+          final docs = snap.data ?? const <FacultyReview>[];
           if (docs.isEmpty) {
             return const Center(
               child: Text('No reviews yet.', style: TextStyle(color: AppTheme.textSecondary)),
@@ -337,8 +357,7 @@ class _CourseReviewsScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
             itemCount: docs.length,
             itemBuilder: (ctx2, i) {
-              final d = docs[i].data() as Map<String, dynamic>;
-              return _ReviewCard(data: d, showFacultyLink: true);
+              return _ReviewCard(review: docs[i], showFacultyLink: true);
             },
           );
         },
@@ -356,13 +375,13 @@ class _ReviewList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fs = FirestoreService();
-    return StreamBuilder<QuerySnapshot>(
+    return StreamBuilder<List<FacultyReview>>(
       stream: fs.reviewsForCourse(courseQuery.toUpperCase()),
       builder: (ctx, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(color: AppTheme.green));
         }
-        final docs = snap.data?.docs ?? [];
+        final docs = snap.data ?? const <FacultyReview>[];
         if (docs.isEmpty) {
           return const Center(
             child: Text('No reviews yet for this course.', style: TextStyle(color: AppTheme.textSecondary)),
@@ -372,8 +391,7 @@ class _ReviewList extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
           itemCount: docs.length,
           itemBuilder: (ctx, i) {
-            final d = docs[i].data() as Map<String, dynamic>;
-            return _ReviewCard(data: d, showFacultyLink: true);
+            return _ReviewCard(review: docs[i], showFacultyLink: true);
           },
         );
       },
@@ -384,15 +402,17 @@ class _ReviewList extends StatelessWidget {
 // ── Review Card ────────────────────────────────────────────────────────────────
 
 class _ReviewCard extends StatelessWidget {
-  final Map<String, dynamic> data;
+  final FacultyReview review;
   final bool showFacultyLink;
-  const _ReviewCard({required this.data, this.showFacultyLink = false});
+  const _ReviewCard({required this.review, this.showFacultyLink = false});
 
   @override
   Widget build(BuildContext context) {
-    final rating = (data['rating'] as num?)?.toInt() ?? 0;
-    final difficulty = (data['difficulty'] as num?)?.toInt() ?? 0;
-    final facultyName = data['facultyName'] as String? ?? '';
+    final rating = review.ratings['teaching'] ?? 0;
+    final difficulty = review.ratings['difficulty'] ?? 0;
+    // Faculty are keyed by initials in the shared corpus. Resolving them to a
+    // full name needs facultyProfiles, which the detail screen loads.
+    final initials = review.facultyInitials;
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -405,16 +425,19 @@ class _ReviewCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      data['courseCode'] ?? '',
+                      review.courseCode,
                       style: const TextStyle(color: AppTheme.green, fontWeight: FontWeight.w700, fontSize: 13),
                     ),
-                    if (facultyName.isNotEmpty)
+                    if (initials.isNotEmpty)
                       GestureDetector(
                         onTap: showFacultyLink
                             ? () => Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => FacultyDetailScreen(facultyName: facultyName),
+                                    builder: (_) => FacultyDetailScreen(
+                                      initials: initials,
+                                      displayName: initials,
+                                    ),
                                   ),
                                 )
                             : null,
@@ -422,7 +445,7 @@ class _ReviewCard extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              facultyName,
+                              initials,
                               style: TextStyle(
                                 color: showFacultyLink ? AppTheme.green.withValues(alpha: 0.7) : AppTheme.textSecondary,
                                 fontSize: 12,
@@ -445,17 +468,19 @@ class _ReviewCard extends StatelessWidget {
               ),
             ],
           ),
-          if (data['comment'] != null && (data['comment'] as String).isNotEmpty) ...[
+          if (review.text.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text(data['comment'], style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14)),
+            Text(review.text,
+                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14)),
           ],
           const SizedBox(height: 8),
           Row(
             children: [
               if (difficulty > 0) _DifficultyChip(difficulty),
               const Spacer(),
+              // No author: review documents carry no uid, email or name.
               Text(
-                data['displayName'] ?? 'Anonymous',
+                review.semester.isNotEmpty ? review.semester : 'Anonymous',
                 style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
               ),
             ],
@@ -495,136 +520,3 @@ class _DifficultyChip extends StatelessWidget {
 }
 
 // ── Submit Sheet ───────────────────────────────────────────────────────────────
-
-class _ReviewSubmitSheet extends StatefulWidget {
-  const _ReviewSubmitSheet();
-
-  @override
-  State<_ReviewSubmitSheet> createState() => _ReviewSubmitSheetState();
-}
-
-class _ReviewSubmitSheetState extends State<_ReviewSubmitSheet> {
-  final _fs = FirestoreService();
-  final _codeCtrl = TextEditingController();
-  final _nameCtrl = TextEditingController();
-  final _facultyCtrl = TextEditingController();
-  final _commentCtrl = TextEditingController();
-  int _rating = 0;
-  int _difficulty = 0;
-  bool _submitting = false;
-
-  @override
-  void dispose() {
-    _codeCtrl.dispose();
-    _nameCtrl.dispose();
-    _facultyCtrl.dispose();
-    _commentCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (_codeCtrl.text.trim().isEmpty || _rating == 0) return;
-    setState(() => _submitting = true);
-    await _fs.submitReview(
-      courseCode: _codeCtrl.text.trim().toUpperCase(),
-      courseName: _nameCtrl.text.trim(),
-      facultyName: _facultyCtrl.text.trim(),
-      rating: _rating,
-      comment: _commentCtrl.text.trim(),
-      difficulty: _difficulty,
-    );
-    if (mounted) Navigator.pop(context);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        left: 20, right: 20, top: 20,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Write a Review',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppTheme.textPrimary)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _codeCtrl,
-              textCapitalization: TextCapitalization.characters,
-              style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: const InputDecoration(labelText: 'Course Code *', hintText: 'e.g. CSE110'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _nameCtrl,
-              style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: const InputDecoration(labelText: 'Course Name', hintText: 'e.g. Programming Language I'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _facultyCtrl,
-              style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: const InputDecoration(labelText: 'Faculty Name', hintText: 'e.g. Md. John Doe'),
-            ),
-            const SizedBox(height: 16),
-            const Text('Rating *', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-            const SizedBox(height: 6),
-            Row(
-              children: List.generate(5, (i) => GestureDetector(
-                onTap: () => setState(() => _rating = i + 1),
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: Icon(
-                    i < _rating ? Icons.star_rounded : Icons.star_outline_rounded,
-                    color: AppTheme.gold,
-                    size: 32,
-                  ),
-                ),
-              )),
-            ),
-            const SizedBox(height: 16),
-            const Text('Difficulty', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              children: List.generate(5, (i) {
-                final labels = ['Easy', 'Medium', 'Hard', 'Very Hard', 'Brutal'];
-                final selected = _difficulty == i + 1;
-                return ChoiceChip(
-                  label: Text(labels[i]),
-                  selected: selected,
-                  onSelected: (_) => setState(() => _difficulty = i + 1),
-                  selectedColor: AppTheme.greenGlow,
-                  labelStyle: TextStyle(
-                    color: selected ? AppTheme.green : AppTheme.textSecondary,
-                    fontSize: 12,
-                  ),
-                );
-              }),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _commentCtrl,
-              maxLines: 3,
-              style: const TextStyle(color: AppTheme.textPrimary),
-              decoration: const InputDecoration(labelText: 'Comment', hintText: 'Share your experience…'),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _submitting ? null : _submit,
-                child: _submitting
-                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2))
-                    : const Text('Submit Review'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
