@@ -16,6 +16,9 @@ dependencies:
   cloud_firestore: ^5.2.0
   google_sign_in: ^6.2.1
 
+  # Worker API calls (review submission)
+  http: ^1.2.0
+
   # Injectable time source so the sync layer is testable under fakeAsync
   clock: ^1.1.2
 
