@@ -1,8 +1,18 @@
 import 'package:flutter/material.dart';
+
+import '../core/playground.dart';
+import '../models/app_state.dart';
 import '../models/course.dart';
+import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
 
+/// What-if tools over the student's real transcript.
+///
+/// Both tools previously asked the student to type their CGPA in by hand and
+/// operated on hypothetical courses. They now work the way the web's do: on
+/// courses actually on the transcript. The maths lives in lib/core/playground.dart
+/// and is differential-tested against the web.
 class PlaygroundScreen extends StatefulWidget {
   const PlaygroundScreen({super.key});
 
@@ -10,19 +20,33 @@ class PlaygroundScreen extends StatefulWidget {
   State<PlaygroundScreen> createState() => _PlaygroundScreenState();
 }
 
-class _PlaygroundScreenState extends State<PlaygroundScreen> with SingleTickerProviderStateMixin {
-  late final TabController _tabs;
+class _PlaygroundScreenState extends State<PlaygroundScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs = TabController(length: 2, vsync: this);
+  final _fs = FirestoreService();
+
+  AppState? _state;
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
+    _load();
   }
 
   @override
   void dispose() {
     _tabs.dispose();
     super.dispose();
+  }
+
+  Future<void> _load() async {
+    final loaded = await _fs.loadState();
+    if (!mounted) return;
+    setState(() {
+      _state = loaded;
+      _loading = false;
+    });
   }
 
   @override
@@ -36,320 +60,508 @@ class _PlaygroundScreenState extends State<PlaygroundScreen> with SingleTickerPr
           labelColor: AppTheme.green,
           unselectedLabelColor: AppTheme.textSecondary,
           tabs: const [
-            Tab(text: 'Grade Simulator'),
+            Tab(text: 'Grade Changer'),
             Tab(text: 'Reverse Solver'),
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabs,
-        children: const [
-          _GradeSimulator(),
-          _ReverseSolver(),
-        ],
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: AppTheme.green))
+          : _body(),
+    );
+  }
+
+  Widget _body() {
+    final state = _state;
+    final courses = state == null
+        ? const <GradedCourse>[]
+        : gradedCourses(
+            state.semesters,
+            startSeason: state.startSeason,
+            startYear: state.startYear,
+          );
+
+    if (courses.isEmpty) return const _NoTranscript();
+
+    final totals = playgroundTotals(
+      state!.semesters,
+      startSeason: state.startSeason,
+      startYear: state.startYear,
+    );
+
+    return TabBarView(
+      controller: _tabs,
+      children: [
+        _GradeChanger(courses: courses, totals: totals),
+        _ReverseSolver(courses: courses, totals: totals),
+      ],
+    );
+  }
+}
+
+class _NoTranscript extends StatelessWidget {
+  const _NoTranscript();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.science_outlined, size: 48, color: AppTheme.textMuted),
+            SizedBox(height: 12),
+            Text(
+              'Add some graded courses in the Calculator first',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
+            SizedBox(height: 6),
+            Text(
+              'These tools work on courses already on your transcript.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// ── Grade Simulator ─────────────────────────────────────────────────────────
-// "What CGPA will I get if I score X in these upcoming courses?"
-
-class _GradeSimulator extends StatefulWidget {
-  const _GradeSimulator();
-
-  @override
-  State<_GradeSimulator> createState() => _GradeSimulatorState();
+/// Grades a student can pick as a hypothetical, lowest first.
+List<String> _selectableGrades() {
+  final entries = kGrades.entries.where((e) => e.value != null).toList()
+    ..sort((a, b) => a.value!.compareTo(b.value!));
+  return entries.map((e) => e.key).toList();
 }
 
-class _GradeSimulatorState extends State<_GradeSimulator> {
-  double _currentCgpa = 0;
-  double _currentCredits = 0;
-  final List<_SimCourse> _courses = [_SimCourse()];
+// ── Grade Changer ───────────────────────────────────────────────────────────
 
-  double? get _projectedCgpa {
-    double pts = _currentCgpa * _currentCredits;
-    double creds = _currentCredits;
-    for (final c in _courses) {
-      final gp = kGrades[c.grade];
-      if (gp == null || c.grade.isEmpty || c.grade == 'P' || c.grade == 'I') continue;
-      pts += gp * c.credits;
-      creds += c.credits;
-    }
-    return creds > 0 ? pts / creds : null;
-  }
+class _GradeChanger extends StatefulWidget {
+  final List<GradedCourse> courses;
+  final PlaygroundTotals totals;
+
+  const _GradeChanger({required this.courses, required this.totals});
+
+  @override
+  State<_GradeChanger> createState() => _GradeChangerState();
+}
+
+class _GradeChangerState extends State<_GradeChanger> {
+  /// course key → hypothetical grade
+  final Map<String, String> _changes = {};
 
   @override
   Widget build(BuildContext context) {
-    final projected = _projectedCgpa;
+    final result = applyGradeChanges(
+      courses: widget.courses,
+      totals: widget.totals,
+      changes: _changes,
+    );
+    final impactsByKey = {for (final i in result.impacts) i.key: i};
+
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
       children: [
-        // Current standing inputs
-        GlassCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Current Standing', style: TextStyle(fontWeight: FontWeight.w700, color: AppTheme.textPrimary)),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _NumberField(
-                      label: 'Current CGPA',
-                      value: _currentCgpa,
-                      min: 0, max: 4,
-                      onChanged: (v) => setState(() => _currentCgpa = v),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _NumberField(
-                      label: 'Credits Completed',
-                      value: _currentCredits,
-                      min: 0, max: 160,
-                      onChanged: (v) => setState(() => _currentCredits = v),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+        _ProjectionBanner(
+          baseline: result.baselineCgpa,
+          projected: result.projectedCgpa,
+          shift: result.shift,
+          onReset: _changes.isEmpty ? null : () => setState(_changes.clear),
         ),
         const SizedBox(height: 12),
-        // Upcoming courses
-        ..._courses.asMap().entries.map((e) => _SimCourseRow(
-          course: e.value,
-          onRemove: _courses.length > 1 ? () => setState(() => _courses.removeAt(e.key)) : null,
-        )),
-        const SizedBox(height: 8),
-        GestureDetector(
-          onTap: () => setState(() => _courses.add(_SimCourse())),
-          child: const Row(
-            children: [
-              Icon(Icons.add_circle_outline_rounded, size: 16, color: AppTheme.green),
-              SizedBox(width: 6),
-              Text('Add course', style: TextStyle(color: AppTheme.green, fontSize: 13, fontWeight: FontWeight.w600)),
-            ],
-          ),
+        const Text(
+          'Change any grade to see what it would do',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
         ),
-        const SizedBox(height: 16),
-        // Result
-        if (projected != null)
-          GlassCard(
-            borderColor: AppTheme.border,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Column(
-                  children: [
-                    const Text('Projected CGPA', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-                    const SizedBox(height: 4),
-                    Text(
-                      projected.toStringAsFixed(2),
-                      style: const TextStyle(
-                        fontSize: 48,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.green,
-                        height: 1,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+        const SizedBox(height: 8),
+        for (final course in widget.courses)
+          _CourseChangeRow(
+            course: course,
+            selected: _changes[course.key],
+            impact: impactsByKey[course.key]?.impact,
+            onChanged: (grade) => setState(() {
+              if (grade == null || grade == course.grade) {
+                _changes.remove(course.key);
+              } else {
+                _changes[course.key] = grade;
+              }
+            }),
           ),
       ],
     );
   }
 }
 
-class _SimCourse {
-  double credits = 3.0;
-  String grade = 'A';
-  _SimCourse();
-}
+class _ProjectionBanner extends StatelessWidget {
+  final double? baseline;
+  final double? projected;
+  final double? shift;
+  final VoidCallback? onReset;
 
-class _SimCourseRow extends StatelessWidget {
-  final _SimCourse course;
-  final VoidCallback? onRemove;
-  const _SimCourseRow({required this.course, required this.onRemove});
+  const _ProjectionBanner({
+    required this.baseline,
+    required this.projected,
+    required this.shift,
+    required this.onReset,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final moved = shift != null && shift!.abs() > 0.0001;
+    final up = (shift ?? 0) > 0;
+
     return GlassCard(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Credits:', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 70,
-            child: DropdownButtonFormField<double>(
-              isExpanded: true,
-              initialValue: kCreditOptions.contains(course.credits) ? course.credits : 3.0,
-              onChanged: (v) => course.credits = v ?? 3.0,
-              dropdownColor: AppTheme.surface,
-              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
-              decoration: const InputDecoration(
-                isDense: true,
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(horizontal: 4),
-              ),
-              items: kCreditOptions.map((c) => DropdownMenuItem(value: c, child: Text(c.toString()))).toList(),
-            ),
+          Row(
+            children: [
+              const Text('Projected CGPA',
+                  style: TextStyle(
+                      color: AppTheme.textSecondary, fontSize: 12)),
+              const Spacer(),
+              if (onReset != null)
+                TextButton(
+                  onPressed: onReset,
+                  child: const Text('Reset',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                ),
+            ],
           ),
-          const Spacer(),
-          const Text('Grade:', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 70,
-            child: DropdownButtonFormField<String>(
-              isExpanded: true,
-              initialValue: course.grade,
-              onChanged: (v) => course.grade = v ?? 'A',
-              dropdownColor: AppTheme.surface,
-              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
-              decoration: const InputDecoration(
-                isDense: true,
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(horizontal: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                projected?.toStringAsFixed(2) ?? '—',
+                style: TextStyle(
+                  fontSize: 34,
+                  fontWeight: FontWeight.w800,
+                  color: moved
+                      ? (up ? AppTheme.green : Colors.redAccent)
+                      : AppTheme.textPrimary,
+                ),
               ),
-              items: kGradeOptions
-                  .where((g) => g.isNotEmpty && g != 'P' && g != 'I' && g != 'F(NT)')
-                  .map((g) => DropdownMenuItem(value: g, child: Text(g)))
-                  .toList(),
-            ),
+              const SizedBox(width: 10),
+              if (moved)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    '${up ? '+' : ''}${shift!.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: up ? AppTheme.green : Colors.redAccent,
+                    ),
+                  ),
+                ),
+            ],
           ),
-          if (onRemove != null) ...[
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: onRemove,
-              child: const Icon(Icons.remove_circle_outline_rounded, size: 18, color: AppTheme.textMuted),
-            ),
-          ],
+          Text(
+            'Currently ${baseline?.toStringAsFixed(2) ?? '—'}',
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+          ),
         ],
       ),
     );
   }
 }
 
-// ── Reverse Solver ───────────────────────────────────────────────────────────
-// "What grade do I need in my remaining courses to reach CGPA X?"
+class _CourseChangeRow extends StatelessWidget {
+  final GradedCourse course;
+  final String? selected;
+  final double? impact;
+  final ValueChanged<String?> onChanged;
+
+  const _CourseChangeRow({
+    required this.course,
+    required this.selected,
+    required this.impact,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final changed = selected != null;
+
+    return GlassCard(
+      margin: const EdgeInsets.only(bottom: 8),
+      borderColor: changed ? AppTheme.green : AppTheme.border,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  course.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: AppTheme.textPrimary, fontSize: 13),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${course.semesterLabel} · ${_creditLabel(course.credits)} cr · now ${course.grade}',
+                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+                ),
+                if (impact != null && impact!.abs() > 0.0001)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      '${impact! > 0 ? '+' : ''}${impact!.toStringAsFixed(3)} CGPA',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: impact! > 0 ? AppTheme.green : Colors.redAccent,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 96,
+            child: DropdownButtonFormField<String>(
+              initialValue: selected ?? course.grade,
+              isDense: true,
+              dropdownColor: AppTheme.surface,
+              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              ),
+              items: [
+                for (final g in _selectableGrades())
+                  DropdownMenuItem(value: g, child: Text(g)),
+              ],
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _creditLabel(double credits) =>
+    credits == credits.roundToDouble() ? credits.toInt().toString() : '$credits';
+
+// ── Reverse Solver ──────────────────────────────────────────────────────────
 
 class _ReverseSolver extends StatefulWidget {
-  const _ReverseSolver();
+  final List<GradedCourse> courses;
+  final PlaygroundTotals totals;
+
+  const _ReverseSolver({required this.courses, required this.totals});
 
   @override
   State<_ReverseSolver> createState() => _ReverseSolverState();
 }
 
 class _ReverseSolverState extends State<_ReverseSolver> {
-  double _currentCgpa = 0;
-  double _currentCredits = 0;
-  double _targetCgpa = 3.5;
-  double _remainingCredits = 12;
+  late String _courseKey = widget.courses.first.key;
+  final _targetCtrl = TextEditingController(text: '3.00');
 
-  double? get _requiredGpa {
-    final needed = (_targetCgpa * (_currentCredits + _remainingCredits)) - (_currentCgpa * _currentCredits);
-    if (_remainingCredits <= 0) return null;
-    return needed / _remainingCredits;
+  @override
+  void initState() {
+    super.initState();
+    _targetCtrl.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _targetCtrl.dispose();
+    super.dispose();
+  }
+
+  GradedCourse? get _course {
+    for (final c in widget.courses) {
+      if (c.key == _courseKey) return c;
+    }
+    return null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final required = _requiredGpa;
-    final feasible = required != null && required <= 4.0 && required >= 0;
+    final target = double.tryParse(_targetCtrl.text.trim());
+    final result = solveForGrade(
+      course: _course,
+      totals: widget.totals,
+      targetCgpa: target,
+    );
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
       children: [
         GlassCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Your Situation', style: TextStyle(fontWeight: FontWeight.w700, color: AppTheme.textPrimary)),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: _NumberField(label: 'Current CGPA', value: _currentCgpa, min: 0, max: 4, onChanged: (v) => setState(() => _currentCgpa = v))),
-                  const SizedBox(width: 12),
-                  Expanded(child: _NumberField(label: 'Credits Done', value: _currentCredits, min: 0, max: 160, onChanged: (v) => setState(() => _currentCredits = v))),
-                ],
+              Text(
+                'Current CGPA ${widget.totals.cgpa?.toStringAsFixed(2) ?? '—'} '
+                'over ${_creditLabel(widget.totals.credits)} credits',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: _NumberField(label: 'Target CGPA', value: _targetCgpa, min: 0, max: 4, onChanged: (v) => setState(() => _targetCgpa = v))),
-                  const SizedBox(width: 12),
-                  Expanded(child: _NumberField(label: 'Remaining Credits', value: _remainingCredits, min: 0, max: 160, onChanged: (v) => setState(() => _remainingCredits = v))),
+              DropdownButtonFormField<String>(
+                initialValue: _courseKey,
+                isExpanded: true,
+                dropdownColor: AppTheme.surface,
+                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+                decoration: const InputDecoration(
+                  labelText: 'Course',
+                  labelStyle: TextStyle(color: AppTheme.textSecondary),
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final c in widget.courses)
+                    DropdownMenuItem(
+                      value: c.key,
+                      child: Text('${c.name} (${c.grade})',
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                    ),
                 ],
+                onChanged: (v) => setState(() => _courseKey = v ?? _courseKey),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _targetCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+                decoration: const InputDecoration(
+                  labelText: 'Target CGPA',
+                  labelStyle: TextStyle(color: AppTheme.textSecondary),
+                  border: OutlineInputBorder(),
+                ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 16),
-        if (required != null)
-          GlassCard(
-            borderColor: feasible ? AppTheme.border : Colors.redAccent.withValues(alpha: 0.4),
-            child: Column(
-              children: [
-                Text(
-                  feasible ? 'You need at least' : 'Not achievable',
-                  style: TextStyle(color: feasible ? AppTheme.textSecondary : Colors.redAccent, fontSize: 13),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  feasible ? required.toStringAsFixed(2) : '> 4.00',
-                  style: TextStyle(
-                    fontSize: 48,
-                    fontWeight: FontWeight.w800,
-                    color: feasible ? AppTheme.green : Colors.redAccent,
-                    height: 1,
-                  ),
-                ),
-                if (feasible) ...[
-                  const SizedBox(height: 4),
-                  const Text('GPA in remaining semesters', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-                ],
-              ],
-            ),
-          ),
+        const SizedBox(height: 12),
+        _SolverResultCard(result: result, course: _course),
       ],
     );
   }
 }
 
-class _NumberField extends StatelessWidget {
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final void Function(double) onChanged;
+class _SolverResultCard extends StatelessWidget {
+  final SolverResult result;
+  final GradedCourse? course;
 
-  const _NumberField({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.onChanged,
+  const _SolverResultCard({required this.result, required this.course});
+
+  @override
+  Widget build(BuildContext context) {
+    switch (result.outcome) {
+      case SolverOutcome.invalid:
+        return const _ResultShell(
+          icon: '🎯',
+          title: 'Enter a target between 0.00 and 4.00',
+          detail: null,
+          color: AppTheme.textSecondary,
+        );
+
+      case SolverOutcome.alreadyMet:
+        return _ResultShell(
+          icon: '🎉',
+          title: "You've already reached that CGPA",
+          detail: 'Any grade in ${course?.name ?? 'this course'} keeps you above it.',
+          color: AppTheme.green,
+        );
+
+      case SolverOutcome.impossible:
+        return _ResultShell(
+          icon: '⛔',
+          title: 'Not possible with this course alone',
+          detail: 'Even an A would leave you at '
+              '${result.resultingCgpa?.toStringAsFixed(2) ?? '—'}. '
+              'You would need to improve more than one course.',
+          color: Colors.redAccent,
+        );
+
+      case SolverOutcome.reachable:
+        return GlassCard(
+          borderColor: AppTheme.green,
+          child: Column(
+            children: [
+              const Text('You need at least',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+              const SizedBox(height: 6),
+              Text(
+                result.requiredGrade ?? '—',
+                style: const TextStyle(
+                  fontSize: 40,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.green,
+                ),
+              ),
+              Text(
+                '(${result.requiredGradePoint?.toStringAsFixed(1) ?? '—'} GP)',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'in ${course?.name ?? ''}'
+                '${course == null ? '' : ' — currently ${course!.grade}'}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'That would put you at '
+                '${result.resultingCgpa?.toStringAsFixed(2) ?? '—'}',
+                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13),
+              ),
+            ],
+          ),
+        );
+    }
+  }
+}
+
+class _ResultShell extends StatelessWidget {
+  final String icon;
+  final String title;
+  final String? detail;
+  final Color color;
+
+  const _ResultShell({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
-    return TextFormField(
-      initialValue: value == value.roundToDouble() ? value.toInt().toString() : value.toStringAsFixed(2),
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-      onChanged: (v) {
-        final parsed = double.tryParse(v);
-        if (parsed != null) onChanged(parsed.clamp(min, max));
-      },
-      decoration: InputDecoration(
-        labelText: label,
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    return GlassCard(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(icon, style: const TextStyle(fontSize: 22)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                        color: color, fontSize: 14, fontWeight: FontWeight.w600)),
+                if (detail != null) ...[
+                  const SizedBox(height: 4),
+                  Text(detail!,
+                      style: const TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 12)),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
