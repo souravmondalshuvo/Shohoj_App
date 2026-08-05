@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import '../config/app_config.dart';
 import '../models/faculty_review.dart';
 import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
+import 'review_submit_sheet.dart';
 import '../widgets/glass_card.dart';
 import 'faculty_screen.dart';
 
@@ -89,33 +91,59 @@ class _ReviewsScreenState extends State<ReviewsScreen> with SingleTickerProvider
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showSubmitUnavailable(context),
-        backgroundColor: AppTheme.surface,
-        foregroundColor: AppTheme.textSecondary,
-        icon: const Icon(Icons.rate_review_outlined),
+        onPressed: () => AppConfig.hasWorker
+            ? _showSubmitSheet(context)
+            : _showSubmitUnavailable(context),
+        backgroundColor:
+            AppConfig.hasWorker ? AppTheme.green : AppTheme.surface,
+        foregroundColor:
+            AppConfig.hasWorker ? Colors.black : AppTheme.textSecondary,
+        icon: Icon(AppConfig.hasWorker
+            ? Icons.rate_review_rounded
+            : Icons.rate_review_outlined),
         label: const Text('Write a Review',
             style: TextStyle(fontWeight: FontWeight.w700)),
       ),
     );
   }
 
-  /// Submitting is not wired up yet.
+  Future<void> _showSubmitSheet(BuildContext context) async {
+    final posted = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const ReviewSubmitSheet(),
+    );
+
+    if (posted == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Review posted anonymously'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  /// Shown when the build carries no Worker URL.
   ///
-  /// Reviews in the shared corpus are written only by the Cloudflare Worker,
-  /// which computes the pseudonymous document id server-side; clients are
-  /// denied create by the rules. Saying so is better than a form that silently
-  /// fails, which is what shipped before.
+  /// Reviews are written only by the Worker, which derives the pseudonymous
+  /// document id from the verified uid; clients are denied create by the rules.
+  /// Without a configured Worker there is nothing to post to, and saying so
+  /// beats a form that fails on submit.
   void _showSubmitUnavailable(BuildContext context) {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.surface,
-        title: const Text('Not available yet',
+        title: const Text('Not available in this build',
             style: TextStyle(color: AppTheme.textPrimary, fontSize: 17)),
         content: const Text(
-          'Writing reviews from the app is still being built. Reviews are '
-          'submitted anonymously through the Shohoj web app for now — they '
-          'show up here as soon as they are posted.',
+          'This build has no review server configured, so posting is turned '
+          'off. Reviews posted from the Shohoj web app still appear here.',
           style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
         ),
         actions: [
