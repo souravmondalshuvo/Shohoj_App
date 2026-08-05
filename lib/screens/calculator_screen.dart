@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../core/gpa.dart';
 import '../data/departments.dart';
 import '../models/app_state.dart';
 import '../models/course.dart';
@@ -130,33 +131,26 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     await _sync.save(_state);
   }
 
-  double? get _cgpa {
-    double pts = 0, creds = 0;
-    for (final sem in _semesters) {
-      if (sem.running) continue;
-      for (final c in sem.courses) {
-        if (!c.countsTowardGPA) continue;
-        final gp = c.gradePoint;
-        if (gp == null) continue;
-        pts += gp * c.credits;
-        creds += c.credits;
-      }
-    }
-    return creds > 0 ? pts / creds : null;
-  }
+  /// Cumulative totals, computed the way the web computes them.
+  ///
+  /// Naively summing every graded course disagrees with the website, because it
+  /// counts superseded retake attempts and ignores transcript summary blocks —
+  /// see lib/core/gpa.dart.
+  CgpaTotals get _totals => calculateCgpaTotals(
+        _semesters,
+        startSeason: _state.startSeason,
+        startYear: _state.startYear,
+      );
 
-  double get _totalCredits {
-    double total = 0;
-    for (final sem in _semesters) {
-      total += sem.totalCredits;
-    }
-    return total;
-  }
+  double? get _cgpa => _totals.cgpa;
+
+  double get _totalCredits => _totals.earnedCredits;
 
   List<GpaDataPoint> get _chartPoints {
     return _semesters
-        .where((s) => !s.running && s.gpa != null)
-        .map((s) => GpaDataPoint(s.name.replaceAll('Semester ', 'S'), s.gpa!))
+        .where((s) => !s.running && !s.summary && semesterGpa(s) != null)
+        .map((s) =>
+            GpaDataPoint(s.name.replaceAll('Semester ', 'S'), semesterGpa(s)!))
         .toList();
   }
 
