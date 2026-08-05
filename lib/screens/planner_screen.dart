@@ -1,8 +1,18 @@
 import 'package:flutter/material.dart';
+
+import '../core/gpa.dart';
+import '../core/planner.dart';
 import '../data/catalog.dart';
+import '../models/app_state.dart';
+import '../services/firestore_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
 
+/// Prerequisite-aware semester planning over the student's real transcript.
+///
+/// The plan lives in `planCourses` on the shared state document, so it survives
+/// a restart and shows up on the website. It previously lived in a local list
+/// and was lost the moment the screen closed.
 class PlannerScreen extends StatefulWidget {
   const PlannerScreen({super.key});
 
@@ -11,297 +21,486 @@ class PlannerScreen extends StatefulWidget {
 }
 
 class _PlannerScreenState extends State<PlannerScreen> {
-  final List<_PlanEntry> _plan = [];
+  final _fs = FirestoreService();
+  final _searchCtrl = TextEditingController();
 
-  double get _totalCredits => _plan.fold(0, (s, e) => s + e.credits);
+  AppState? _state;
+  bool _loading = true;
+  bool _saving = false;
+  String _search = '';
+  PlannerFilter _filter = PlannerFilter.all;
 
-  void _addCourse(String code, String name, double credits) {
-    setState(() => _plan.add(_PlanEntry(code: code, name: name, credits: credits)));
+  /// Grade assumed across the whole plan for the projection.
+  String _assumedGrade = 'B';
+
+  static final List<CatalogCourse> _catalog = [
+    for (final c in kAllCourses)
+      CatalogCourse(c.code, c.name, c.credits.toDouble()),
+  ];
+  static final Map<String, CatalogCourse> _catalogMap = {
+    for (final c in _catalog) c.code: c,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
 
   @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final loaded = await _fs.loadState();
+    if (!mounted) return;
+    setState(() {
+      _state = loaded ?? AppState();
+      _loading = false;
+    });
+  }
+
+  Future<void> _persist() async {
+    final state = _state;
+    if (state == null) return;
+    setState(() => _saving = true);
+    try {
+      await _fs.saveState(state);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _add(String code) {
+    setState(() => _state!.planCourses.add(code));
+    _persist();
+  }
+
+  void _remove(String code) {
+    setState(() => _state!.planCourses.remove(code));
+    _persist();
+  }
+
+  Set<String> get _superseded => retakenKeys(
+        _state!.semesters,
+        startSeason: _state!.startSeason,
+        startYear: _state!.startYear,
+      );
+
+  @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: AppTheme.green)),
+      );
+    }
+
+    final state = _state!;
+    final plan = state.planCourses;
+    final validation = validatePlan(
+      planCourses: plan,
+      catalog: _catalogMap,
+      semesters: state.semesters,
+      superseded: _superseded,
+    );
+
+    final totals = calculateCgpaTotals(
+      state.semesters,
+      startSeason: state.startSeason,
+      startYear: state.startYear,
+    );
+    final projection = projectCgpa(
+      currentPoints: totals.points,
+      currentCredits: totals.cgpaCredits,
+      plannedCredits: validation.totalCredits,
+      assumedGrade: _assumedGrade,
+    );
+
+    final available = availableCourses(
+      catalog: _catalog,
+      semesters: state.semesters,
+      planCourses: plan,
+      currentDept: state.currentDept,
+      superseded: _superseded,
+      searchQuery: _search,
+      filter: _filter,
+      limit: 60,
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Semester Planner'),
         actions: [
-          if (_plan.isNotEmpty)
+          if (_saving)
+            const Padding(
+              padding: EdgeInsets.only(right: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: AppTheme.green),
+                ),
+              ),
+            )
+          else if (plan.isNotEmpty)
             TextButton(
-              onPressed: () => setState(() => _plan.clear()),
-              child: const Text('Clear', style: TextStyle(color: AppTheme.textSecondary)),
+              onPressed: () {
+                setState(plan.clear);
+                _persist();
+              },
+              child: const Text('Clear',
+                  style: TextStyle(color: AppTheme.textSecondary)),
             ),
         ],
       ),
-      body: Column(
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 80),
         children: [
-          // Credit summary
-          GlassCard(
-            margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            borderColor: AppTheme.border,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Planned Credits', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                    Text(
-                      _totalCredits.toStringAsFixed(1),
-                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: AppTheme.green),
-                    ),
-                  ],
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text('Courses', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                    Text(
-                      '${_plan.length}',
-                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
-                    ),
-                  ],
-                ),
-              ],
+          _PlanSummary(
+            validation: validation,
+            projection: projection,
+            assumedGrade: _assumedGrade,
+            onGradeChanged: (g) => setState(() => _assumedGrade = g),
+          ),
+          const SizedBox(height: 12),
+          if (plan.isNotEmpty) ...[
+            const _SectionLabel('Your plan'),
+            for (final code in plan)
+              _PlannedRow(
+                code: code,
+                name: _catalogMap[code]?.name ?? code,
+                credits: _catalogMap[code]?.credits ?? 0,
+                onRemove: () => _remove(code),
+              ),
+            const SizedBox(height: 12),
+          ],
+          const _SectionLabel('Add courses'),
+          TextField(
+            controller: _searchCtrl,
+            onChanged: (v) => setState(() => _search = v),
+            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
+            decoration: const InputDecoration(
+              hintText: 'Search by code or name',
+              hintStyle: TextStyle(color: AppTheme.textMuted),
+              prefixIcon:
+                  Icon(Icons.search, color: AppTheme.textMuted, size: 20),
+              border: OutlineInputBorder(),
+              isDense: true,
             ),
           ),
-          // Course search & add
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: _CourseSearchField(onAdd: _addCourse),
-          ),
-          // Plan list
-          Expanded(
-            child: _plan.isEmpty
-                ? const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.calendar_month_outlined, size: 48, color: AppTheme.textMuted),
-                        SizedBox(height: 12),
-                        Text('Your plan is empty', style: TextStyle(color: AppTheme.textSecondary)),
-                        SizedBox(height: 4),
-                        Text('Search and add courses above', style: TextStyle(color: AppTheme.textMuted, fontSize: 12)),
-                      ],
-                    ),
-                  )
-                : ReorderableListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
-                    itemCount: _plan.length,
-                    onReorder: (oldIdx, newIdx) {
-                      setState(() {
-                        if (newIdx > oldIdx) newIdx--;
-                        final item = _plan.removeAt(oldIdx);
-                        _plan.insert(newIdx, item);
-                      });
-                    },
-                    itemBuilder: (ctx, i) {
-                      final entry = _plan[i];
-                      return GlassCard(
-                        key: ValueKey(Object.hashAll([entry.code, entry.name, i])),
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.drag_handle_rounded, color: AppTheme.textMuted, size: 18),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    entry.code,
-                                    style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.green, fontSize: 13),
-                                  ),
-                                  if (entry.name.isNotEmpty && entry.name != entry.code)
-                                    Text(
-                                      entry.name,
-                                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                ],
-                              ),
-                            ),
-                            Text(
-                              '${entry.credits % 1 == 0 ? entry.credits.toInt() : entry.credits} cr',
-                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-                            ),
-                            const SizedBox(width: 10),
-                            GestureDetector(
-                              onTap: () => setState(() => _plan.removeAt(i)),
-                              child: const Icon(Icons.close_rounded, size: 18, color: AppTheme.textMuted),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Course Search Field with autocomplete ─────────────────────────────────────
-
-class _CourseSearchField extends StatefulWidget {
-  final void Function(String code, String name, double credits) onAdd;
-  const _CourseSearchField({required this.onAdd});
-
-  @override
-  State<_CourseSearchField> createState() => _CourseSearchFieldState();
-}
-
-class _CourseSearchFieldState extends State<_CourseSearchField> {
-  final _ctrl = TextEditingController();
-  final _credCtrl = TextEditingController(text: '3');
-  final _layerLink = LayerLink();
-  OverlayEntry? _overlay;
-  List<CourseInfo> _suggestions = [];
-  CourseInfo? _selected;
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    _credCtrl.dispose();
-    _closeOverlay();
-    super.dispose();
-  }
-
-  void _onChanged(String v) {
-    _selected = null;
-    final results = searchCourses(v);
-    setState(() => _suggestions = results.take(8).toList());
-    if (results.isNotEmpty && v.length >= 2) {
-      _showOverlay();
-    } else {
-      _closeOverlay();
-    }
-  }
-
-  void _pick(CourseInfo info) {
-    _selected = info;
-    _ctrl.text = info.code;
-    _credCtrl.text = info.credits.toInt().toString();
-    setState(() => _suggestions = []);
-    _closeOverlay();
-  }
-
-  void _add() {
-    final raw = _ctrl.text.trim().toUpperCase();
-    if (raw.isEmpty) return;
-    final credits = double.tryParse(_credCtrl.text.trim()) ?? 3.0;
-    final info = _selected ?? kCourseDB[raw];
-    widget.onAdd(raw, info?.name ?? '', credits);
-    _ctrl.clear();
-    _credCtrl.text = '3';
-    _selected = null;
-    setState(() => _suggestions = []);
-    _closeOverlay();
-  }
-
-  void _showOverlay() {
-    _closeOverlay();
-    _overlay = OverlayEntry(
-      builder: (_) => Positioned(
-        width: 280,
-        child: CompositedTransformFollower(
-          link: _layerLink,
-          showWhenUnlinked: false,
-          offset: const Offset(0, 48),
-          child: Material(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(12),
-            elevation: 8,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: _suggestions.map((c) => InkWell(
-                  onTap: () => _pick(c),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    child: Row(
-                      children: [
-                        Text(c.code,
-                            style: const TextStyle(color: AppTheme.green, fontWeight: FontWeight.w700, fontSize: 13)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(c.name,
-                              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                        Text('${c.credits.toInt()} cr',
-                            style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
-                      ],
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              for (final f in PlannerFilter.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(switch (f) {
+                      PlannerFilter.all => 'All',
+                      PlannerFilter.unlocked => 'Available now',
+                      PlannerFilter.locked => 'Blocked',
+                    }),
+                    selected: _filter == f,
+                    onSelected: (_) => setState(() => _filter = f),
+                    selectedColor: AppTheme.greenDim,
+                    labelStyle: TextStyle(
+                      fontSize: 12,
+                      color:
+                          _filter == f ? AppTheme.green : AppTheme.textSecondary,
                     ),
                   ),
-                )).toList(),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (available.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text('Nothing matches',
+                    style: TextStyle(color: AppTheme.textSecondary)),
               ),
             ),
-          ),
-        ),
+          for (final course in available)
+            _AvailableRow(course: course, onAdd: () => _add(course.code)),
+        ],
       ),
     );
-    Overlay.of(context).insert(_overlay!);
   }
+}
 
-  void _closeOverlay() {
-    _overlay?.remove();
-    _overlay = null;
-  }
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          text,
+          style: const TextStyle(
+            color: AppTheme.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+}
+
+class _PlanSummary extends StatelessWidget {
+  final PlanValidation validation;
+  final CgpaProjection projection;
+  final String assumedGrade;
+  final ValueChanged<String> onGradeChanged;
+
+  const _PlanSummary({
+    required this.validation,
+    required this.projection,
+    required this.assumedGrade,
+    required this.onGradeChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          flex: 3,
-          child: CompositedTransformTarget(
-            link: _layerLink,
-            child: TextField(
-              controller: _ctrl,
-              textCapitalization: TextCapitalization.characters,
-              onChanged: _onChanged,
-              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-              decoration: const InputDecoration(
-                hintText: 'Course code (e.g. CSE110)',
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    final credits = validation.totalCredits;
+    final label = credits == credits.roundToDouble()
+        ? credits.toInt().toString()
+        : credits.toString();
+
+    return GlassCard(
+      borderColor:
+          validation.issues.isNotEmpty ? Colors.redAccent : AppTheme.border,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Planned credits',
+                      style: TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 12)),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                ],
               ),
-            ),
+              const Spacer(),
+              if (projection.projected != null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text('Projected CGPA',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 12)),
+                    Text(
+                      projection.projected!.toStringAsFixed(2),
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.green,
+                      ),
+                    ),
+                    if (projection.delta != null)
+                      Text(
+                        '${projection.delta! >= 0 ? '+' : ''}'
+                        '${projection.delta!.toStringAsFixed(2)} if all $assumedGrade',
+                        style: const TextStyle(
+                            color: AppTheme.textMuted, fontSize: 11),
+                      ),
+                  ],
+                ),
+            ],
           ),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 64,
-          child: TextField(
-            controller: _credCtrl,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-            decoration: const InputDecoration(
-              hintText: 'Cr.',
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text('Assume ',
+                  style:
+                      TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+              DropdownButton<String>(
+                value: assumedGrade,
+                isDense: true,
+                dropdownColor: AppTheme.surface,
+                underline: const SizedBox.shrink(),
+                style: const TextStyle(color: AppTheme.green, fontSize: 13),
+                items: [
+                  for (final g in ['A', 'A-', 'B+', 'B', 'B-', 'C+', 'C'])
+                    DropdownMenuItem(value: g, child: Text(g)),
+                ],
+                onChanged: (v) => onGradeChanged(v ?? assumedGrade),
+              ),
+              const Text(' in every planned course',
+                  style:
+                      TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+            ],
           ),
-        ),
-        const SizedBox(width: 8),
-        ElevatedButton(
-          onPressed: _add,
-          style: ElevatedButton.styleFrom(minimumSize: const Size(48, 44), padding: EdgeInsets.zero),
-          child: const Icon(Icons.add_rounded, color: Colors.black),
-        ),
-      ],
+          for (final issue in validation.issues)
+            _Note(
+                text: issue, color: Colors.redAccent, icon: Icons.error_outline),
+          for (final warning in validation.warnings)
+            _Note(
+                text: warning,
+                color: AppTheme.gold,
+                icon: Icons.warning_amber_rounded),
+        ],
+      ),
     );
   }
 }
 
-class _PlanEntry {
+class _Note extends StatelessWidget {
+  final String text;
+  final Color color;
+  final IconData icon;
+  const _Note({required this.text, required this.color, required this.icon});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(text, style: TextStyle(color: color, fontSize: 12)),
+            ),
+          ],
+        ),
+      );
+}
+
+class _PlannedRow extends StatelessWidget {
   final String code;
   final String name;
   final double credits;
-  _PlanEntry({required this.code, required this.name, this.credits = 3.0});
+  final VoidCallback onRemove;
+
+  const _PlannedRow({
+    required this.code,
+    required this.name,
+    required this.credits,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassCard(
+      margin: const EdgeInsets.only(bottom: 8),
+      borderColor: AppTheme.green,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(code,
+                    style: const TextStyle(
+                        color: AppTheme.green,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13)),
+                Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: AppTheme.textPrimary, fontSize: 13)),
+                Text('${credits.toStringAsFixed(0)} cr',
+                    style: const TextStyle(
+                        color: AppTheme.textMuted, fontSize: 11)),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onRemove,
+            icon: const Icon(Icons.remove_circle_outline,
+                color: AppTheme.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AvailableRow extends StatelessWidget {
+  final AvailableCourse course;
+  final VoidCallback onAdd;
+
+  const _AvailableRow({required this.course, required this.onAdd});
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassCard(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(course.code,
+                        style: TextStyle(
+                          color: course.canTake
+                              ? AppTheme.green
+                              : AppTheme.textSecondary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        )),
+                    if (course.unlockCount > 0) ...[
+                      const SizedBox(width: 8),
+                      Text('unlocks ${course.unlockCount}',
+                          style: const TextStyle(
+                              color: AppTheme.textMuted, fontSize: 11)),
+                    ],
+                  ],
+                ),
+                Text(course.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: AppTheme.textPrimary, fontSize: 13)),
+                Text('${course.credits.toStringAsFixed(0)} cr',
+                    style: const TextStyle(
+                        color: AppTheme.textMuted, fontSize: 11)),
+                if (course.missingHard.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text('Needs ${course.missingHard.join(', ')}',
+                        style: const TextStyle(
+                            color: Colors.redAccent, fontSize: 11)),
+                  )
+                else if (course.missingSoft.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                        'Recommended first: ${course.missingSoft.join(', ')}',
+                        style: const TextStyle(
+                            color: AppTheme.gold, fontSize: 11)),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onAdd,
+            icon: Icon(
+              Icons.add_circle_outline,
+              color: course.canTake ? AppTheme.green : AppTheme.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
