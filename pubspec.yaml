@@ -34,6 +34,21 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^4.0.0
   fake_async: ^1.3.3
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+
+# App launcher icons, generated from the shared Shohoj mark.
+#   dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: "assets/app_icon.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  # Deliberately no adaptive_icon_foreground/background. The mark already has
+  # its own rounded-square background; supplying it as an adaptive foreground
+  # makes Android shrink the whole thing into the 66% safe zone and composite a
+  # second background around it. The legacy icon lets Android mask the artwork
+  # directly, which is what the mark was drawn for.
+
