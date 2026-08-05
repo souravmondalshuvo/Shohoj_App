@@ -5,12 +5,15 @@ const Map<String, double?> kGrades = {
   'D+': 1.30, 'D': 1.00, 'D-': 0.70,
   'F': 0.00, 'F(NT)': 0.00,
   'P': null, 'I': null,
+  // A withdrawal carries no grade point, but unlike P/I it still consumed an
+  // attempt: it counts toward attempted credits and nothing else.
+  'W': null,
 };
 
 const List<String> kGradeOptions = [
   '', 'A+', 'A', 'A-', 'B+', 'B', 'B-',
   'C+', 'C', 'C-', 'D+', 'D', 'D-',
-  'F', 'F(NT)', 'P', 'I',
+  'F', 'F(NT)', 'P', 'I', 'W',
 ];
 
 const List<double> kCreditOptions = [0.75, 1.0, 1.5, 2.0, 3.0, 4.0];
@@ -86,13 +89,13 @@ class Course {
 
   bool get countsTowardGPA {
     if (grade.isEmpty) return false;
-    if (grade == 'P' || grade == 'I') return false;
+    if (grade == 'P' || grade == 'I' || grade == 'W') return false;
     return true;
   }
 
   bool get countsCredits {
     if (grade.isEmpty) return false;
-    if (grade == 'P' || grade == 'I') return false;
+    if (grade == 'P' || grade == 'I' || grade == 'W') return false;
     return true;
   }
 
