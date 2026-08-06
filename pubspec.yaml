@@ -19,6 +19,13 @@ dependencies:
   # Worker API calls (review submission)
   http: ^1.2.0
 
+  # Transcript import: PDF text extraction and file selection.
+  # pdfrx is MIT and PDFium-backed. Deliberately not syncfusion_flutter_pdf,
+  # which is the usual choice and ships under a Community/commercial licence
+  # that would make this MIT app non-redistributable under its own terms.
+  pdfrx: ^2.4.7
+  file_picker: ^11.0.3
+
   # Injectable time source so the sync layer is testable under fakeAsync
   clock: ^1.1.2
 
