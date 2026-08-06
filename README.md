@@ -114,8 +114,14 @@ only to your machine. Copy `ios/Flutter/Local.xcconfig.example` to get started.
 
 The case this exists for: if the repo lives in an iCloud-synced folder
 (`~/Documents`, `~/Desktop`), Xcode code signing fails on extended attributes
-the sync daemon attaches to files under the build directory. Redirecting
-`FLUTTER_BUILD_DIR` outside the synced tree avoids it.
+the sync daemon attaches to files under the build directory.
+
+**Do not override `FLUTTER_BUILD_DIR` to work around that.** Flutter writes
+native assets under the default `build/` directory while Xcode then looks for
+them in the overridden location, and the iOS build fails with
+`The native assets specification ... references objective_c, which was not
+found`. Moving the repo out of the synced tree is the fix that works for both
+this and the conflict copies above.
 
 Keep machine-specific paths out of the committed xcconfigs — they are relative
 to the repo, so they resolve somewhere arbitrary on any other checkout and make
