@@ -6,6 +6,19 @@
 // daemon attaches to files under the build directory. Redirecting the build
 // output outside the synced tree avoids it.
 //
-// The path is relative to ios/Flutter/, so adjust it for your own machine.
+// WARNING: overriding FLUTTER_BUILD_DIR breaks the iOS build.
+//
+// Flutter writes native assets under the default build/ directory, but Xcode
+// then looks for them in the overridden location and fails:
+//
+//   Exception: The native assets specification at .../NativeAssetsManifest.json
+//   references objective_c, which was not found in <overridden dir>/native_assets/ios/
+//
+// So this particular override cannot be used for iOS. It is kept here as a
+// record of what was tried. The real fix for the iCloud signing problem is to
+// move the repo out of the synced tree entirely — which also stops the
+// conflict copies described in the README.
+//
+// The path would be relative to ios/Flutter/.
 //
 // FLUTTER_BUILD_DIR=../../../../private/tmp/shohoj_flutter_build
