@@ -12,11 +12,13 @@ import '../models/semester.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/sync/user_state_sync.dart';
+import '../services/transcript_import_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/gpa_chart.dart';
 import '../widgets/liquid_glass.dart';
 import 'profile_screen.dart';
+import 'transcript_import_sheet.dart';
 
 class CalculatorScreen extends StatefulWidget {
   const CalculatorScreen({super.key});
@@ -37,6 +39,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   StreamSubscription<AppState>? _remoteSub;
 
   bool _loading = true;
+  bool _importing = false;
   String? _selectedDept;
 
   List<Semester> get _semesters => _state.semesters;
@@ -171,6 +174,76 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     );
   }
 
+  /// Reads a BRACU grade sheet and, once confirmed, replaces the transcript.
+  ///
+  /// Nothing is written until the parsed result has been reviewed — the parser
+  /// cannot be validated against every layout, and a bad import would produce a
+  /// wrong CGPA rather than an obvious failure.
+  Future<void> _importTranscript() async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    setState(() => _importing = true);
+    final outcome = await TranscriptImportService().importTranscript();
+    if (!mounted) return;
+    setState(() => _importing = false);
+
+    if (!outcome.isSuccess) {
+      // A dismissed picker is not a failure worth reporting.
+      if (outcome.failure == ImportFailure.cancelled) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text(outcome.message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 6),
+      ));
+      return;
+    }
+
+    final hasExisting = _state.semesters
+        .any((s) => s.courses.any((c) => c.grade.isNotEmpty));
+
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => TranscriptImportSheet(
+        result: outcome.result!,
+        fileName: outcome.fileName ?? 'transcript.pdf',
+        willReplaceExisting: hasExisting,
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final imported = semestersFromParsed(outcome.result!.semesters);
+    setState(() {
+      _state.semesters
+        ..clear()
+        ..addAll(imported);
+      _state.semesterCounter = imported.length;
+      final dept = outcome.result!.detectedDept;
+      if (dept != null) _selectedDept = _deptCodeFor(dept);
+    });
+
+    await _sync.save(_state, immediate: true);
+    if (!mounted) return;
+
+    messenger.showSnackBar(SnackBar(
+      content: Text('Imported ${imported.length} semesters'),
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  /// Maps the transcript's programme label back to a department code.
+  String? _deptCodeFor(String label) {
+    for (final entry in kDeptMap.entries) {
+      if (label.contains('(${entry.key})')) return entry.key;
+    }
+    return null;
+  }
+
   void _openProfile() {
     HapticFeedback.selectionClick();
     Navigator.of(context).push(
@@ -201,6 +274,19 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
         surfaceTintColor: Colors.transparent,
         title: const Text('CGPA Calculator'),
         actions: [
+          IconButton(
+            tooltip: 'Import grade sheet',
+            onPressed: _importing ? null : _importTranscript,
+            icon: _importing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppTheme.green),
+                  )
+                : const Icon(Icons.upload_file_outlined,
+                    color: AppTheme.textSecondary),
+          ),
           if (isCupertino)
             Padding(
               padding: const EdgeInsets.only(right: 6),
