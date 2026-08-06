@@ -9,6 +9,14 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # iCloud Drive conflict copies. This repo lives under ~/Documents, so a
+    # sync race leaves byte-identical duplicates like `gpa 2.dart` beside the
+    # original. They are gitignored, but gitignore does not stop the analyzer
+    # reading them — and a duplicate inside lib/ gets compiled as real source.
+    - "**/* [0-9].dart"
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`
