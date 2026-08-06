@@ -405,6 +405,15 @@ TranscriptParseResult parseTranscriptText(String text) {
     }
   }
 
+  // No semester headers at all means this is not a grade sheet, which is a
+  // different problem from a grade sheet in a layout we cannot read.
+  if (working.isEmpty) {
+    return TranscriptParseResult(
+      status: TranscriptParseStatus.empty,
+      detectedDept: detectedDept,
+    );
+  }
+
   final counts = working.map((s) => s.codes.length).toList();
   final totalCourses = counts.fold<int>(0, (a, b) => a + b);
   if (totalCourses == 0) {
