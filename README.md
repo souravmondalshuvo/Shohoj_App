@@ -85,6 +85,27 @@ Shohoj only allows Google accounts ending with:
 
 The app checks this after Google account selection and again after Firebase sign-in. Rejected users are signed out immediately.
 
+## iCloud conflict copies
+
+This repo lives under `~/Documents`, which iCloud Drive syncs. Sync races leave
+byte-identical duplicates named `foo 2.dart`, `foo 3.png` beside the original.
+
+They are gitignored and excluded from analysis, but they are not harmless: a
+duplicate inside `lib/` is compiled as real source, `android/app/src/main/res/`
+rejects filenames containing spaces, and a stray icon in an Xcode asset catalog
+can break the build. 53 had accumulated at one point.
+
+```bash
+./tool/clean_conflict_copies.sh           # list
+./tool/clean_conflict_copies.sh --delete  # remove
+```
+
+Only copies identical to their original are removed; anything that differs is
+reported and left alone.
+
+**The real fix is to move this repo out of the iCloud-synced tree.** That also
+removes the need for the `FLUTTER_BUILD_DIR` workaround below.
+
 ## Per-machine Xcode settings
 
 `ios/Flutter/Debug.xcconfig` and `Release.xcconfig` end with an optional
