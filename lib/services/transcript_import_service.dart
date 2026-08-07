@@ -10,6 +10,9 @@ enum ImportFailure {
   /// The picker was dismissed.
   cancelled,
 
+  /// The picker itself failed — the plugin threw rather than returning a file.
+  pickerUnavailable,
+
   /// The file could not be opened as a PDF.
   unreadable,
 
@@ -41,6 +44,9 @@ class ImportOutcome {
   /// A message that says what to do next, not just what went wrong.
   String get message => switch (failure) {
         ImportFailure.cancelled => 'No file selected.',
+        ImportFailure.pickerUnavailable =>
+          'The file picker could not be opened. Check that Shohoj is allowed '
+              'to access your files, then try again.',
         ImportFailure.unreadable =>
           'That file could not be opened as a PDF. Make sure it is the grade '
               'sheet downloaded from CONNECT.',
@@ -72,7 +78,15 @@ class TranscriptImportService {
   final Future<String> Function(Uint8List bytes)? extractText;
 
   Future<ImportOutcome> importTranscript() async {
-    final file = await (pickFile ?? _pickPdf)();
+    final PlatformFile? file;
+    try {
+      file = await (pickFile ?? _pickPdf)();
+    } catch (_) {
+      // A throwing picker must still come back as a value — the caller resets
+      // its spinner on the outcome, not in a finally.
+      return const ImportOutcome.failed(ImportFailure.pickerUnavailable);
+    }
+
     if (file == null) {
       return const ImportOutcome.failed(ImportFailure.cancelled);
     }

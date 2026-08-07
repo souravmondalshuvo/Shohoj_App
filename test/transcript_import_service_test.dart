@@ -38,9 +38,13 @@ TranscriptImportService serviceThat({
   PlatformFile? picks,
   String? extracts,
   Object? throwsOnExtract,
+  Object? throwsOnPick,
 }) =>
     TranscriptImportService(
-      pickFile: () async => picks,
+      pickFile: () async {
+        if (throwsOnPick != null) throw throwsOnPick;
+        return picks;
+      },
       extractText: (_) async {
         if (throwsOnExtract != null) throw throwsOnExtract;
         return extracts ?? '';
@@ -52,6 +56,16 @@ void main() {
     test('a dismissed picker is cancelled, not an error', () async {
       final r = await serviceThat(picks: null).importTranscript();
       expect(r.failure, ImportFailure.cancelled);
+      expect(r.isSuccess, isFalse);
+    });
+
+    test('a throwing picker is a failure, not an escaping exception', () async {
+      // The caller clears its spinner on the outcome. An exception past this
+      // point leaves the import button disabled for good.
+      final r = await serviceThat(
+        throwsOnPick: StateError('no activity to handle intent'),
+      ).importTranscript();
+      expect(r.failure, ImportFailure.pickerUnavailable);
       expect(r.isSuccess, isFalse);
     });
 
