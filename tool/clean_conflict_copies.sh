@@ -30,7 +30,15 @@ while IFS= read -r dup; do
   found=$((found + 1))
   original="$(sed -E 's/ [0-9]+(\.[^.]+)$/\1/' <<< "$dup")"
 
-  if [[ -f "$original" ]] && ! diff -q "$dup" "$original" >/dev/null 2>&1; then
+  # No original means this is not a conflict copy at all — "Assignment 2.pdf"
+  # matches the same pattern. Nothing to compare against, so nothing to remove.
+  if [[ ! -f "$original" ]]; then
+    echo "no original, keeping: $dup"
+    kept=$((kept + 1))
+    continue
+  fi
+
+  if ! diff -q "$dup" "$original" >/dev/null 2>&1; then
     echo "DIFFERS, keeping: $dup"
     kept=$((kept + 1))
     continue
