@@ -198,8 +198,9 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       return;
     }
 
-    final hasExisting = _state.semesters
-        .any((s) => s.courses.any((c) => c.grade.isNotEmpty));
+    // Any entered course counts, graded or not. Import clears the lot, and a
+    // semester of typed-in course names is work worth warning about.
+    final hasExisting = _state.semesters.any((s) => s.courses.isNotEmpty);
 
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
