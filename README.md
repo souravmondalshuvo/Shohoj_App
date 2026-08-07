@@ -101,7 +101,8 @@ can break the build. 53 had accumulated at one point.
 ```
 
 Only copies identical to their original are removed; anything that differs is
-reported and left alone.
+reported and left alone, as is anything with no original to compare against —
+`Assignment 2.pdf` matches the same pattern but is not a conflict copy.
 
 **The real fix is to move this repo out of the iCloud-synced tree.** That also
 removes the need for the `FLUTTER_BUILD_DIR` workaround below.
