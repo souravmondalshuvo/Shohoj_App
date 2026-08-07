@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shohoj/core/transcript.dart';
+import 'package:shohoj/data/departments.dart';
 import 'package:shohoj/screens/transcript_import_sheet.dart';
 import 'package:shohoj/services/transcript_import_service.dart';
 
@@ -164,6 +165,31 @@ void main() {
 
     test('an empty parse yields no semesters', () {
       expect(semestersFromParsed(const []), isEmpty);
+    });
+  });
+
+  group('mapping the detected programme to a department', () {
+    test('every label the parser can emit maps to a real department', () {
+      // A label with no mapping silently leaves the degree tracker on the
+      // wrong department, which quietly reports the wrong credits remaining.
+      for (final label in kDepartmentLabels.values) {
+        final code = deptCodeForLabel(label);
+        expect(code, isNotNull, reason: label);
+        expect(kDeptMap.containsKey(code), isTrue, reason: label);
+      }
+    });
+
+    test('maps labels that carry no parenthesised code', () {
+      // EEE's label is "BSc EEE — Electrical & Electronic Engineering".
+      expect(deptCodeForLabel(kDepartmentLabels['EEE']!), 'EEE');
+    });
+
+    test('maps the parser LAW label onto the LLB department', () {
+      expect(deptCodeForLabel(kDepartmentLabels['LAW']!), 'LLB');
+    });
+
+    test('an unknown label maps to nothing rather than a wrong department', () {
+      expect(deptCodeForLabel('B.Sc. in Something Else (XYZ)'), isNull);
     });
   });
 }

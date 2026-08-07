@@ -224,7 +224,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
         ..addAll(imported);
       _state.semesterCounter = imported.length;
       final dept = outcome.result!.detectedDept;
-      if (dept != null) _selectedDept = _deptCodeFor(dept);
+      if (dept != null) _selectedDept = deptCodeForLabel(dept) ?? _selectedDept;
     });
 
     await _sync.save(_state, immediate: true);
@@ -234,14 +234,6 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       content: Text('Imported ${imported.length} semesters'),
       behavior: SnackBarBehavior.floating,
     ));
-  }
-
-  /// Maps the transcript's programme label back to a department code.
-  String? _deptCodeFor(String label) {
-    for (final entry in kDeptMap.entries) {
-      if (label.contains('(${entry.key})')) return entry.key;
-    }
-    return null;
   }
 
   void _openProfile() {
