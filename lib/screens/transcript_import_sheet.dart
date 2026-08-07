@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/transcript.dart';
+import '../data/departments.dart';
 import '../models/course.dart';
 import '../models/semester.dart';
 import '../theme/app_theme.dart';
@@ -251,6 +252,20 @@ class _Actions extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Maps a programme label from the parser back to a department code.
+///
+/// Keyed off the parser's own labels rather than matched on a parenthesised
+/// code — not every label carries one, EEE's being the counterexample.
+String? deptCodeForLabel(String label) {
+  for (final entry in kDepartmentLabels.entries) {
+    if (entry.value != label) continue;
+    // The parser calls it LAW; the department list calls it LLB.
+    final code = entry.key == 'LAW' ? 'LLB' : entry.key;
+    return kDeptMap.containsKey(code) ? code : null;
+  }
+  return null;
 }
 
 /// Converts a parsed transcript into semesters for the shared state document.
