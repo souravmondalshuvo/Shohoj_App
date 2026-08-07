@@ -227,12 +227,18 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       if (dept != null) _selectedDept = deptCodeForLabel(dept) ?? _selectedDept;
     });
 
-    await _sync.save(_state, immediate: true);
+    final saved = await _sync.save(_state, immediate: true);
     if (!mounted) return;
 
+    // A failed write leaves the import in memory only, where the next remote
+    // snapshot overwrites it. Reporting success there would be a lie.
     messenger.showSnackBar(SnackBar(
-      content: Text('Imported ${imported.length} semesters'),
+      content: Text(saved
+          ? 'Imported ${imported.length} semesters'
+          : 'Imported ${imported.length} semesters, but saving failed — '
+              'check your connection. Your grades may not survive a reload.'),
       behavior: SnackBarBehavior.floating,
+      duration: Duration(seconds: saved ? 4 : 8),
     ));
   }
 
